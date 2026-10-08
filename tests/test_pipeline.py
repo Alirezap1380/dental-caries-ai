@@ -163,3 +163,27 @@ def test_leak_inflates_internal_against_external(leaky_run) -> None:
     internal = leaky_run.internal.stratified.stratum("caries").auc_vs_sound
     external = leaky_run.external.stratified.stratum("caries").auc_vs_sound
     assert internal.lo > external.hi
+
+
+def test_dentex_shaped_run_reports_what_it_cannot_compute(tmp_path: Path) -> None:
+    """One consensus reader, no external set, inventory on only some images."""
+    import dataclasses as dc
+
+    from dcai.data.synthetic import ReaderProfile, make_reader_study
+    from dcai.pipeline import DatasetInputs
+    from dcai.simulate import INTERNAL, simulate_model
+
+    cfg = dataclasses.replace(StudyConfig.from_yaml(CONFIG), n_boot=40)
+    study = make_reader_study(n_patients=160, seed=7, full_read_fraction=1.0,
+                              readers=(ReaderProfile("consensus", (0.7, 0.95), 0.01, 0.2),))
+    preds, dets = simulate_model(study, INTERNAL, seed=7)
+    records = [r if i % 3 else dc.replace(r, teeth_present=None, teeth_present_source=None)
+               for i, r in enumerate(study.records)]
+    r = evaluate(DatasetInputs("internal", records, preds, dets), None, cfg)
+    assert r.external is None and r.agreement.krippendorff is None
+    assert any("no external dataset" in n for n in r.not_computable)
+    assert any("no human tooth inventory" in n for n in r.not_computable)
+    assert any("one reader only" in n for n in r.not_computable)
+    assert [h.reason for h in r.headline][1:] == ["no external dataset"] * 2
+    md = render_markdown(r, synthetic=True, figures=write_figures(r, tmp_path))
+    assert "sensitivity (external)" not in md and "one reader only" in md

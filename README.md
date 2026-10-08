@@ -80,6 +80,31 @@ that can silently go wrong:
 4. If the inventory is predicted, report enumeration accuracy alongside every
    tooth-level metric.
 
+## DENTEX: what is evaluated, and what is not
+
+DENTEX (HuggingFace `ibrahimhamamci/DENTEX`) ships no patient identifiers and no
+site labels. Both are recovered from the images (`probes/recover_groups.py`).
+`scripts/audit_dentex.py` checks the release against its card and regenerates
+every number in `results/dentex_audit/report.md`.
+
+**The released test set (250 images) has no evaluation role in this project**, for
+two independent reasons, both reproduced by `scripts/audit_dentex.py`:
+
+1. Its labels are an 8-code, treatment-oriented scheme (caries, curettage, root
+   canal, extraction, impacted, lesion, fracture, sound), not the challenge's
+   4-class diagnosis ground truth. Even a careful mapping would measure a
+   different task. Curettage, for example, sits on incisors and is periodontal
+   treatment, not deep caries.
+2. A large share of its images also appear elsewhere in the release, including
+   one image that is in the diagnosis training set itself.
+
+It is kept as evidence in the audit only.
+
+**Evaluation set:** the 755 depth-labelled images (diagnosis train 705 +
+validation 50), split by *recovered* patient. Every metric is reported both with
+and without the images that have a copy anywhere in a training subset, and the
+gap between the two is a headline result.
+
 ## External validation on Tufts: caries as a domain-shift delta
 
 The Tufts axes do not encode lesion depth, so DENTEX's caries / deep-caries split

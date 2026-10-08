@@ -2,16 +2,13 @@
 
     python scripts/audit_dentex.py --data data/dentex/raw --out results/dentex_audit
 
-Every number in the report is computed here, from the zips' central directories
-(CRC-32 and size per member) and the annotation files inside them. Nothing is
-copied by hand. A zip that is still downloading is read from HuggingFace by HTTP
-range requests instead (only the directory and the JSONs, a few MB).
+Evidence standard: every overlap number rests on SHA-256 of the extracted image
+bytes (exact copies), or on two independent pixel signals (re-encoded copies, see
+`dcai.data.near_duplicates`). Before anything is read, each zip is verified
+against the SHA-256 that HuggingFace publishes for it. Nothing in the report is
+copied by hand.
 
-Byte-identical duplicates (same CRC-32 and size) are a LOWER bound on overlap.
-Re-encoded or cropped copies need a pixel-level pass (--pixels, once the images
-are local).
-
-DENTEX: Hamamci et al., arXiv:2305.19112, CC-BY-NC-SA 4.0. This report contains
+DENTEX: Hamamci et al., arXiv:2305.19112, CC-BY-NC-SA 4.0. The report contains
 aggregate counts and file names only, no images or annotations.
 """
 
@@ -19,82 +16,36 @@ from __future__ import annotations
 
 import argparse
 import collections
-import io
+import hashlib
 import json
 import statistics as st
-import urllib.request
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 
-from dcai.data.schema import (
-    Annotation,
-    Finding,
-    InventorySource,
-    Modality,
-    PatientIdSource,
-    RadiographRecord,
-)
+from dcai.data.dentex import COCO_FILES, SUBSETS, TEST_ZIP, TRAIN_ZIP, VAL_ZIP, load_dentex
+from dcai.data.near_duplicates import near_duplicates, signatures_for, threshold_table
+from dcai.data.schema import InventorySource
 from dcai.eval.ratings import check_inventory
 
-HF = "https://huggingface.co/datasets/ibrahimhamamci/DENTEX/resolve/main/DENTEX/"
-SUBSETS = {
-    "(a) quadrant": ("training_data.zip", "training_data/quadrant/xrays/"),
-    "(b) enumeration": ("training_data.zip", "training_data/quadrant_enumeration/xrays/"),
-    "(c) diagnosis train": ("training_data.zip", "training_data/quadrant-enumeration-disease/xrays/"),
-    "unlabelled": ("training_data.zip", "training_data/unlabelled/xrays/"),
-    "validation": ("validation_data.zip", "validation_data/quadrant_enumeration_disease/xrays/"),
-    "test": ("test_data.zip", "disease/input/"),
+# Git-LFS SHA-256 published by HuggingFace for ibrahimhamamci/DENTEX (main), from
+# https://huggingface.co/api/datasets/ibrahimhamamci/DENTEX/tree/main/DENTEX
+PUBLISHED_SHA256 = {
+    TRAIN_ZIP: "18b2a2dbc5a2b10b0cc6a7677c46a382f4709ab8c9c3bb94f57b74e38e11ffd3",
+    VAL_ZIP: "6370bb4f1024bd610cde13242a465cb2eff195fc02f56ac22126555e7edc7bc3",
+    TEST_ZIP: "ed396d6daa133264ddb0ecdbed3f963868d2a31344ba0fab929a6a1773d82ce2",
 }
-JSON_C = "training_data/quadrant-enumeration-disease/train_quadrant_enumeration_disease.json"
-JSON_B = "training_data/quadrant_enumeration/train_quadrant_enumeration.json"
-JSON_A = "training_data/quadrant/train_quadrant.json"
-FINDING = {"Caries": Finding.CARIES, "Deep Caries": Finding.DEEP_CARIES,
-           "Periapical Lesion": Finding.PERIAPICAL_LESION, "Impacted": Finding.IMPACTED_TOOTH}
+NAMES = {"quadrant": "(a) quadrant", "enumeration": "(b) enumeration",
+         "diagnosis": "(c) diagnosis train", "unlabelled": "unlabelled",
+         "validation": "validation", "test": "test"}
 
 
-class _Range(io.RawIOBase):
-    """Seekable read-only view of a remote file over HTTP range requests."""
-
-    def __init__(self, url: str) -> None:
-        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD")) as r:
-            self.url, self.size = r.url, int(r.headers["Content-Length"])
-        self.pos = 0
-
-    def readable(self) -> bool:
-        return True
-
-    def seekable(self) -> bool:
-        return True
-
-    def tell(self) -> int:
-        return self.pos
-
-    def seek(self, off: int, whence: int = 0) -> int:
-        self.pos = {0: off, 1: self.pos + off, 2: self.size + off}[whence]
-        return self.pos
-
-    def readinto(self, b) -> int:
-        if self.pos >= self.size:
-            return 0
-        end = min(self.pos + len(b), self.size) - 1
-        req = urllib.request.Request(self.url, headers={"Range": f"bytes={self.pos}-{end}"})
-        with urllib.request.urlopen(req) as r:
-            data = r.read()
-        b[: len(data)] = data
-        self.pos += len(data)
-        return len(data)
-
-
-def open_zip(data: Path, name: str) -> tuple[zipfile.ZipFile, str]:
-    local = data / name
-    try:
-        return zipfile.ZipFile(local), "local"
-    except (FileNotFoundError, zipfile.BadZipFile):  # absent or still downloading
-        return zipfile.ZipFile(io.BufferedReader(_Range(HF + name), buffer_size=1 << 20)), "remote"
-
-
-def region(tooth: int) -> str:
-    return "incisor" if tooth <= 2 else "canine" if tooth == 3 else "premolar" if tooth <= 5 else "molar"
+def file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 24), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def table(header: list[str], rows: list[list[object]]) -> str:
@@ -102,219 +53,198 @@ def table(header: list[str], rows: list[list[object]]) -> str:
     return "\n".join(out + ["| " + " | ".join(map(str, r)) + " |" for r in rows])
 
 
+def region(tooth: int) -> str:
+    return "incisor" if tooth <= 2 else "canine" if tooth == 3 else "premolar" if tooth <= 5 else "molar"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--cache", type=Path, default=Path("data/dentex/cache"))
+    ap.add_argument("--workers", type=int, default=8)
     args = ap.parse_args(argv)
 
-    zips, sources = {}, {}
-    for zname in sorted({z for z, _ in SUBSETS.values()}):
-        zips[zname], sources[zname] = open_zip(args.data, zname)
-    tz = zips["training_data.zip"]
-    c = json.loads(tz.read(JSON_C))
-    b = json.loads(tz.read(JSON_B))
-    a = json.loads(tz.read(JSON_A))
-    val = json.loads((args.data / "validation_triple.json").read_text())
-    test_labels = {
-        i.filename.rsplit("/", 1)[-1]: json.loads(zips["test_data.zip"].read(i))
-        for i in zips["test_data.zip"].infolist()
-        if i.filename.startswith("disease/label/") and i.filename.endswith(".json")
-    }
-    md = ["# DENTEX release audit",
-          "Generated by `scripts/audit_dentex.py` from the HuggingFace release "
-          "(`ibrahimhamamci/DENTEX`). Zip sources: "
-          + ", ".join(f"{k} ({v})" for k, v in sources.items()) + ". DENTEX: Hamamci et al., "
-          "arXiv:2305.19112, CC-BY-NC-SA 4.0. Counts and file names only."]
+    for name, expected in PUBLISHED_SHA256.items():
+        got = file_sha256(args.data / name)
+        if got != expected:
+            raise SystemExit(f"{name}: SHA-256 {got} does not match the published {expected}")
 
-    # --- layout and formats ---------------------------------------------------------
-    key_of: dict[tuple[int, int], list[tuple[str, str]]] = collections.defaultdict(list)
-    counts, junk = {}, []
-    for sub, (zname, prefix) in SUBSETS.items():
-        members = []
-        for i in zips[zname].infolist():
-            rest = i.filename[len(prefix):]
-            if i.filename.startswith(prefix) and i.filename.endswith(".png"):
-                if "/" in rest:
-                    junk.append(i.filename)
-                    continue
-                members.append(i)
-        counts[sub] = len(members)
-        for i in members:
-            key_of[(i.CRC, i.file_size)].append((sub, rest_name(i.filename)))
-    test_vocab = collections.Counter(
-        s["label"].rsplit("-", 1)[0] for lab in test_labels.values() for s in lab["shapes"])
+    rel = load_dentex(args.data, index_cache=args.cache / "sha256_index.json")
+    index = rel.index
+    counts = collections.Counter(e.subset for e in index)
+    subs = list(SUBSETS)
+    md = ["# DENTEX release audit",
+          ("Generated by `scripts/audit_dentex.py` from the HuggingFace release "
+          "`ibrahimhamamci/DENTEX`. Each zip was verified against its published SHA-256 "
+          "before reading. DENTEX: Hamamci et al., arXiv:2305.19112, CC-BY-NC-SA 4.0. "
+          "Counts and file names only.")]
+
+    # --- layout and formats (check 4) --------------------------------------------
+    with zipfile.ZipFile(args.data / VAL_ZIP) as zf:
+        junk = [i.filename for i in zf.infolist()
+                if ".ipynb_checkpoints" in i.filename and not i.is_dir()]
+    with zipfile.ZipFile(args.data / TRAIN_ZIP) as zf:
+        quad_cats = json.loads(zf.read(COCO_FILES["quadrant"]))["categories"]
+        c_json = json.loads(zf.read(COCO_FILES["diagnosis"]))
+        b_json = json.loads(zf.read(COCO_FILES["enumeration"]))
+    vocab = collections.Counter(f"{lab.code}-{lab.word}" for labs in rel.test_labels.values()
+                                for lab in labs)
     md += [
         "## Layout and annotation formats (check 4)",
-        table(["subset", "images"], [[k, v] for k, v in counts.items()]),
-        ("- Subsets (a), (b), (c)-train: COCO JSON, one file per subset inside "
+        table(["subset", "images"], [[NAMES[s], counts[s]] for s in subs]),
+        "- Subsets (a), (b), (c)-train: COCO JSON, one file per subset inside "
         "`training_data.zip`.\n"
-        "- Validation: images in `validation_data.zip`; labels in a *separate* COCO file "
-        "`validation_triple.json` at the repository root.\n"
-        "- Test: LabelMe JSON, one file per image (`disease/label/test_*.json`), polygon "
-        f"labels `code-word-FDI`. Vocabulary: {dict(sorted(test_vocab.items()))}.\n"
-        f"- Junk to skip: {junk or 'none'}.\n"
-        "- Category ids are NOT positional. In (a), quadrant id 0 is named \"2\" and id 1 "
-        "\"1\". In (b), names are ints; in (c), strings. Map through the names, never `id + 1`.\n"
-        "- File names are reused across subsets for *different* images (e.g. `train_673.png` "
-        "in (a) and (c) have different dimensions), and the same image appears under "
-        "different names. Identity must come from content, not names."),
+        "- Validation: images in `validation_data.zip`; labels in a *separate* COCO file, "
+        "`validation_triple.json`, at the repository root.\n"
+        "- Test: LabelMe JSON, one file per image (`disease/label/test_*.json`); labels "
+        f"`code-word-FDI`. Vocabulary: {dict(sorted(vocab.items()))}.\n"
+        f"- Junk skipped by the loader: {junk or 'none'}.\n"
+        "- Category ids are not positional. Quadrant categories in (a): "
+        + ", ".join(f"id {c['id']} = \"{c['name']}\"" for c in quad_cats)
+        + ". The loader maps every id through its name.\n"
+        "- File names are reused across subsets for different images, and the same image "
+        "appears under different names. Identity comes from content (SHA-256).",
     ]
 
-    # --- overlap ---------------------------------------------------------------------
-    members_of: dict[str, set] = collections.defaultdict(set)
-    for key, where in key_of.items():
-        for sub, _ in where:
-            members_of[sub].add(key)
-    subs = list(SUBSETS)
-    rows = []
-    for r in subs:
-        row: list[object] = [r]
-        for col in subs:
-            if r == col:
-                row.append(f"({sum(1 for k in members_of[r] if sum(s == r for s, _ in key_of[k]) > 1)})")
-            else:
-                row.append(len(members_of[r] & members_of[col]))
-        rows.append(row)
-    others = lambda s: set().union(*(members_of[o] for o in subs if o != s))
-    test_dup = len(members_of["test"] & others("test"))
-    val_dup = len(members_of["validation"] & others("validation"))
-    cross = [where for k, where in key_of.items()
-             if {s for s, _ in where} >= {"(c) diagnosis train", "test"}]
+    # --- exact copies (SHA-256) --------------------------------------------------
+    members: dict[str, set[str]] = collections.defaultdict(set)
+    stored = collections.Counter((e.subset, e.sha256) for e in index)
+    subsets_of: dict[str, set[str]] = collections.defaultdict(set)
+    for e in index:
+        members[e.subset].add(e.sha256)
+        subsets_of[e.sha256].add(e.subset)
+    within = {s: sum(1 for (sub, _), n in stored.items() if sub == s and n > 1) for s in subs}
+    name_of = {(e.subset, e.sha256): e.file_name for e in index}
+    shared_c_test = sorted(members["diagnosis"] & members["test"])
+
+    def exact_elsewhere(s: str) -> set[str]:
+        return members[s] & set().union(*(members[o] for o in subs if o != s))
+
     md += [
-        "## Overlap between subsets (checks 2 and 3)",
-        ("Images in the row subset with a byte-identical copy (same CRC-32 and size) in the "
-        "column subset; the diagonal counts duplicates *within* a subset. A lower bound: "
-        "re-encoded copies are not caught."),
-        table(["", *subs], rows),
-        f"- **{test_dup} of {counts['test']} test images** have a byte-identical copy "
-        "elsewhere in the release, and "
-        f"**{len(cross)} test image(s) appear in the diagnosis training set itself**: "
-        + ", ".join(" = ".join(n for _, n in w) for w in cross) + ".",
-        f"- **{val_dup} of {counts['validation']} validation images** have a copy elsewhere.",
-        (f"- **{len(members_of['(c) diagnosis train'] & members_of['(b) enumeration'])} of "
-        f"{counts['(c) diagnosis train']} diagnosis-train images** also appear in (b), so "
-        "a full human tooth enumeration exists for them."),
+        "## Exact copies: SHA-256 of image bytes (checks 2 and 3)",
+        ("Distinct images in the row subset that also occur, byte for byte, in the column "
+        "subset. The diagonal counts images stored more than once *within* a subset."),
+        table(["", *(NAMES[s] for s in subs)],
+              [[NAMES[r], *(f"({within[r]})" if r == c else len(members[r] & members[c])
+                            for c in subs)] for r in subs]),
+        f"- **{len(exact_elsewhere('test'))} of {counts['test']} test images** have an exact "
+        f"copy elsewhere in the release; **{len(shared_c_test)}** are in the diagnosis "
+        "training set itself"
+        + (": " + ", ".join(f"`{name_of[('diagnosis', h)]}` = `{name_of[('test', h)]}`"
+                            for h in shared_c_test) if shared_c_test else "") + ".",
+        (f"- **{len(exact_elsewhere('validation'))} of {counts['validation']} validation "
+        "images** have an exact copy elsewhere."),
+        (f"- **{len(members['diagnosis'] & members['enumeration'])} of {counts['diagnosis']} "
+        "diagnosis-train images** also occur in (b)."),
     ]
 
-    # --- inventory (check 1) --------------------------------------------------------
-    def fdi_of(d: dict):
-        q = {x["id"]: int(x["name"]) for x in d["categories_1"]}
-        t = {x["id"]: int(x["name"]) for x in d["categories_2"]}
-        return lambda an: q[an["category_id_1"]] * 10 + t[an["category_id_2"]]
+    # --- re-encoded copies (pixels) ----------------------------------------------
+    sigs = signatures_for([(str(args.data / e.zip_name), e.member, e.sha256) for e in index],
+                          cache=args.cache / "pixel_signatures.json", workers=args.workers)
+    sig_list = list(sigs.values())
+    pairs = near_duplicates(sig_list)
+    # (row, col) -> row-subset images with a re-encoded copy (distinct bytes) in col
+    reenc: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
+    for p in pairs:
+        for x, y in ((p.a, p.b), (p.b, p.a)):
+            for s in subsets_of[x]:
+                for t in subsets_of[y]:
+                    reenc[(s, t)].add(x)
+    grid = threshold_table(sig_list)
+    hams = sorted({h for h, _ in grid})
+    corrs = sorted({c for _, c in grid})
 
-    cf, bf = fdi_of(c), fdi_of(b)
-    diag = {x["id"]: x["name"] for x in c["categories_3"]}
-    c_anns: dict[int, list[Annotation]] = collections.defaultdict(list)
-    for an in c["annotations"]:
-        c_anns[an["image_id"]].append(
-            Annotation(FINDING[diag[an["category_id_3"]]], "consensus", tooth_fdi=cf(an)))
+    def any_copy(s: str) -> set[str]:
+        return exact_elsewhere(s) | set().union(*(reenc[(s, o)] for o in subs if o != s))
 
-    def rec(im: dict, teeth: set[int]) -> RadiographRecord:
-        return RadiographRecord(
-            image_id=im["file_name"], path=im["file_name"], patient_id=im["file_name"],
-            patient_id_source=PatientIdSource.ASSUMED_UNIQUE, dataset="dentex",
-            modality=Modality.PANORAMIC, readers={"consensus"}, annotations=c_anns[im["id"]],
-            teeth_present=teeth, teeth_present_source=InventorySource.ANNOTATED)
+    md += [
+        "## Re-encoded copies: pixel evidence",
+        ("Pairs of *different* files (distinct SHA-256) declared the same image when the "
+        "perceptual-hash Hamming distance is ≤ 6 **and** the standardised-thumbnail "
+        f"correlation is ≥ 0.95: **{len(pairs)} pairs**. Images in the row subset with such "
+        "a copy in the column subset (the diagonal: within the subset):"),
+        table(["", *(NAMES[s] for s in subs)],
+              [[NAMES[r], *(len(reenc[(r, c)]) for c in subs)] for r in subs]),
+        ("Pair counts across thresholds (rows: max Hamming distance; columns: min "
+        "correlation), so the count does not rest on one cutoff:"),
+        table(["Hamming ≤", *(f"corr ≥ {c}" for c in corrs)],
+              [[h, *(grid[(h, c)] for c in corrs)] for h in hams]),
+        (f"- Exact or re-encoded: **{len(any_copy('test'))} of {counts['test']} test images** "
+        f"and **{len(any_copy('validation'))} of {counts['validation']} validation images** "
+        "have a copy elsewhere in the release."),
+    ]
 
-    per_b = collections.Counter(an["image_id"] for an in b["annotations"])
-    per_c = [len(c_anns[im["id"]]) for im in c["images"]]
-    boxed = [rec(im, {x.tooth_fdi for x in c_anns[im["id"]]}) for im in c["images"]
-             if c_anns[im["id"]]]
+    # --- inventory (check 1) -----------------------------------------------------
+    per_c = collections.Counter(a["image_id"] for a in c_json["annotations"])
+    per_c_img = [per_c.get(im["id"], 0) for im in c_json["images"]]
+    per_b = collections.Counter(a["image_id"] for a in b_json["annotations"])
+    diag = [r for r in rel.records if r.meta["source"].startswith("diagnosis/")]
     try:
-        check_inventory(boxed)
+        check_inventory([replace(r, teeth_present=frozenset(a.tooth_fdi for a in r.annotations),
+                                 teeth_present_source=InventorySource.ANNOTATED)
+                         for r in diag if r.annotations])
         guard = "**did not fire** (unexpected)"
     except ValueError:
         guard = "**fires**, as it should"
-    crc_name = {}
-    for sub in ("(b) enumeration", "(c) diagnosis train"):
-        zname, prefix = SUBSETS[sub]
-        for i in zips[zname].infolist():
-            if i.filename.startswith(prefix) and i.filename.endswith(".png"):
-                crc_name[(sub, rest_name(i.filename))] = (i.CRC, i.file_size)
-    b_by_key = {crc_name.get(("(b) enumeration", im["file_name"])): im for im in b["images"]}
-    b_teeth: dict[int, list[int]] = collections.defaultdict(list)
-    for an in b["annotations"]:
-        b_teeth[an["image_id"]].append(bf(an))
-    usable, inconsistent = [], 0
-    for im in c["images"]:
-        bim = b_by_key.get(crc_name.get(("(c) diagnosis train", im["file_name"])))
-        if bim is None:
-            continue
-        teeth = set(b_teeth[bim["id"]])
-        if {x.tooth_fdi for x in c_anns[im["id"]]} <= teeth:
-            usable.append(rec(im, teeth))
-        else:
-            inconsistent += 1
+    inv = [r for r in rel.records if r.teeth_present is not None]
+    reasons = collections.Counter(rel.inventory_conflicts.values())
     md += [
         "## Does (c) enumerate every tooth? (check 1)",
-        (f"No. (c) boxes only diagnosed teeth: median {st.median(per_c)} boxes per image "
-        f"(max {max(per_c)}; {per_c.count(0)} images with none), against a median of "
-        f"{st.median(per_b.values())} per image in (b), which boxes every tooth. An inventory "
+        (f"No. (c) boxes only diagnosed teeth: median {st.median(per_c_img)} boxes per image "
+        f"(max {max(per_c_img)}; {per_c_img.count(0)} images with none), against a median "
+        f"of {st.median(per_b.values())} in (b), which boxes every tooth. An inventory "
         f"rebuilt from (c)'s boxes is diseased-teeth-only, and `check_inventory` {guard}."),
-        (f"Of the diagnosis-train images that also appear in (b), {len(usable)} have a (b) "
-        f"enumeration containing every diagnosed tooth: a usable human inventory (median "
-        f"{st.median(len(r.teeth_present) for r in usable)} teeth, "
-        f"{check_inventory(usable):.1%} carrying no finding). {inconsistent} more have a "
-        "diagnosed tooth whose FDI number is missing from (b)'s enumeration, so the two "
-        "annotation layers disagree on numbering there. (b) itself has "
-        f"{sum(len(v) != len(set(v)) for v in b_teeth.values())} images with a duplicated "
-        f"FDI and {sum(len(v) > 32 for v in b_teeth.values())} with more than 32 boxes."),
+        "Evaluation images (diagnosis train + validation) with a human inventory from a "
+        f"byte-identical copy in (b): **{len(inv)}** (median "
+        f"{st.median(len(r.teeth_present) for r in inv)} teeth; "
+        f"{check_inventory(inv):.1%} of teeth carry no finding). Excluded from tooth-level "
+        "metrics despite a (b) copy: "
+        + ("; ".join(f"{n} because {why}" for why, n in reasons.items()) or "none") + ".",
     ]
 
-    # --- test labels (check 3) ------------------------------------------------------
+    # --- test labels (check 3) ---------------------------------------------------
     by_region: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
-    for lab in test_labels.values():
-        for s in lab["shapes"]:
-            word, fdi = s["label"].rsplit("-", 1)
-            by_region["test " + word][region(int(fdi) % 10)] += 1
-    t2 = {x["id"]: int(x["name"]) for x in c["categories_2"]}
-    for an in c["annotations"]:
-        by_region["train " + diag[an["category_id_3"]]][region(t2[an["category_id_2"]])] += 1
-    region_rows = [[k, sum(v.values()), *(f"{v[r] / sum(v.values()):.0%}"
-                                          for r in ("incisor", "canine", "premolar", "molar"))]
+    for labs in rel.test_labels.values():
+        for lab in labs:
+            by_region[f"test {lab.code}-{lab.word}"][region(lab.tooth_fdi % 10)] += 1
+    for r in diag:
+        for a in r.annotations:
+            by_region[f"train {a.finding.value}"][region(a.tooth_fdi % 10)] += 1
+    region_rows = [[k, sum(v.values()), *(f"{v[g] / sum(v.values()):.0%}"
+                                          for g in ("incisor", "canine", "premolar", "molar"))]
                    for k, v in sorted(by_region.items())]
+    by_sha = {r.meta["sha256"]: r for r in diag}
     shared_rows = []
-    for where in cross:
-        tr = next(n for s, n in where if s == "(c) diagnosis train")
-        te = next(n for s, n in where if s == "test")
-        im = next(i for i in c["images"] if i["file_name"] == tr)
-        shared_rows.append([f"`{tr}` (train)", ", ".join(
-            f"{x.tooth_fdi}: {x.finding.value}" for x in sorted(c_anns[im["id"]],
-                                                              key=lambda x: x.tooth_fdi))])
-        lab = test_labels[te.replace(".png", ".json")]
-        shared_rows.append([f"`{te}` (test)", ", ".join(
-            f"{s['label'].rsplit('-', 1)[1]}: {s['label'].rsplit('-', 1)[0]}"
-            for s in sorted(lab["shapes"], key=lambda s: s["label"].rsplit("-", 1)[1]))])
+    for h in shared_c_test:
+        shared_rows.append([f"`{name_of[('diagnosis', h)]}` (train)", ", ".join(
+            f"{a.tooth_fdi}: {a.finding.value}"
+            for a in sorted(by_sha[h].annotations, key=lambda a: a.tooth_fdi))])
+        shared_rows.append([f"`{name_of[('test', h)]}` (test)", ", ".join(
+            f"{lab.tooth_fdi}: {lab.code}-{lab.word}"
+            for lab in sorted(rel.test_labels[h], key=lambda x: x.tooth_fdi))])
     md += [
         "## Were the test labels released? (check 3)",
-        (f"Yes ({len(test_labels)} label files), but **not as the challenge's 4-class "
-        "diagnosis ground truth**. The released test labels use an 8-code Turkish vocabulary "
-        "that reads as treatment-oriented. The official evaluation script reads COCO ground "
-        "truth with `category_id_1/2/3`, which is not in this release. Test codes against "
-        "train diagnoses, by tooth region:"),
+        (f"Yes ({len(rel.test_labels)} label files), but **not as the challenge's 4-class "
+        "diagnosis ground truth**. They use an 8-code Turkish vocabulary that reads as "
+        "treatment-oriented. The official evaluation script reads COCO ground truth with "
+        "`category_id_1/2/3`, which is not in this release. Test codes against train "
+        "diagnoses, by tooth region:"),
         table(["label", "n", "incisor", "canine", "premolar", "molar"], region_rows),
-        ("`çürük` (caries), `gömülü` (impacted) and `lezyon` (lesion) match their train "
-        "counterparts by region. `küretaj` (curettage) sits mostly on incisors, unlike deep "
-        "caries, and fits periodontal treatment. `kanal` (root canal) matches deep caries' "
-        "region pattern but is a treatment code (possibly an existing filling). The image "
-        "present in both train and test shows the two schemes side by side:"),
-        table(["image", "labels (FDI: label)"], shared_rows),
-        ("**Consequence:** no defensible deep-caries label exists on the released test set. "
-        "The depth-stratified labelled set is (c)-train + validation = "
-        f"{counts['(c) diagnosis train'] + counts['validation']} images (before removing "
-        "duplicates). Test can contribute only through a versioned mapping like the Tufts "
-        "one, for classes that map unambiguously."),
+        ("`küretaj` (curettage) sits mostly on incisors, unlike deep caries, and fits "
+        "periodontal treatment. `kanal` (root canal) and `çekim` (extraction) are treatment "
+        "codes. The image(s) present in both train and test show the two schemes side by "
+        "side:"),
+        table(["image", "labels (FDI: label)"], shared_rows) if shared_rows else "(none)",
+        ("**Consequence:** the released test set has no evaluation role in this project "
+        "(see README). The depth-labelled evaluation set is diagnosis train + validation = "
+        f"{counts['diagnosis'] + counts['validation']} images."),
     ]
-    _ = a, val  # loaded to prove they parse; used by the loaders
+
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "report.md").write_text("\n\n".join(md) + "\n")
     print(f"wrote {args.out / 'report.md'}")
     return 0
-
-
-def rest_name(path: str) -> str:
-    return path.rsplit("/", 1)[-1]
 
 
 if __name__ == "__main__":

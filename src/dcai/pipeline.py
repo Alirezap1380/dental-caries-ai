@@ -167,7 +167,7 @@ class AgreementResult:
     n_images: int
     readers: tuple[str, ...]
     weights: str
-    krippendorff: Estimate
+    krippendorff: Estimate | None  # None with fewer than two readers
     fleiss: Estimate | None
     fleiss_reason: str | None
     pairwise: tuple[PairAgreement, ...]
@@ -210,7 +210,7 @@ class EvaluationResult:
     operating_point: OperatingPoint
     agreement: AgreementResult
     internal: SetResult
-    external: SetResult
+    external: SetResult | None  # None: no external dataset (rule 4 then has nothing behind it)
     headline: tuple[HeadlineClaim, ...]
     not_computable: tuple[str, ...] = field(default_factory=tuple)
 
@@ -232,6 +232,24 @@ def _table(inputs: DatasetInputs, scale: OrdinalScale) -> ToothTable:
     return tooth_table(inputs.records, inputs.predictions, scale=scale)
 
 
+def _inventoried(inputs: DatasetInputs, notes: list[str]) -> DatasetInputs:
+    """Restrict to images with a tooth inventory; tooth-level metrics need one.
+
+    Lesion-level detection does not, so it keeps every image. The exclusion is
+    recorded rather than silent.
+    """
+    keep = [r for r in inputs.records if r.teeth_present is not None]
+    if not keep:
+        raise ValueError(f"{inputs.name}: no image has a tooth inventory; "
+                         "tooth-level metrics cannot be computed")
+    if len(keep) < len(inputs.records):
+        notes.append(
+            f"{inputs.name}: {len(inputs.records) - len(keep)} of {len(inputs.records)} images "
+            "have no human tooth inventory, so tooth-level metrics use the other "
+            f"{len(keep)} (lesion-level detection uses all)")
+    return _restrict(inputs, keep, inputs.name)
+
+
 def _evaluate_set(
     inputs: DatasetInputs,
     op: OperatingPoint,
@@ -241,7 +259,7 @@ def _evaluate_set(
     *,
     allow_patient_overlap: bool = False,
 ) -> SetResult:
-    t = _table(inputs, cfg.scale)
+    t = _table(_inventoried(inputs, notes), cfg.scale)
     boot = {"seed": seed, "n_boot": cfg.n_boot}
     stratified = stratified_report(t.reference, t.p_lesion, t.groups, scale=cfg.scale,
                                    threshold=op.threshold, **boot)
@@ -285,6 +303,7 @@ def _evaluate_set(
 def _agreement(
     inputs: DatasetInputs, op: OperatingPoint, cfg: StudyConfig, notes: list[str]
 ) -> AgreementResult:
+    inputs = _inventoried(inputs, [])  # the exclusion is already noted by _evaluate_set
     humans = tooth_level_ratings(inputs.records, cfg.scale)
     table = _table(inputs, cfg.scale)
     # Both are built in inventory order; a mismatch would silently mis-pair readers and model.
@@ -292,6 +311,15 @@ def _agreement(
         raise AssertionError("tooth units out of alignment")
     boot = {"seed": cfg.seed, "n_boot": cfg.n_boot}
     weights = "linear"
+    if len(humans.raters) < 2:
+        reason = (f"one reader only ({', '.join(humans.raters)}): inter-observer agreement and "
+                  "the human ceiling are not computable on this data")
+        notes.append(f"{inputs.name}: {reason}")
+        return AgreementResult(
+            n_teeth=len(humans.item_ids), n_images=len(inputs.records), readers=humans.raters,
+            weights=weights, krippendorff=None, fleiss=None, fleiss_reason=reason,
+            pairwise=(), ceiling=(), ceiling_reason=reason, sweep=None,
+        )
 
     fleiss = fleiss_reason = None
     try:
@@ -330,13 +358,15 @@ def _agreement(
     )
 
 
-def _headline(internal: SetResult, external: SetResult, cfg: StudyConfig):
+def _headline(internal: SetResult, external: SetResult | None, cfg: StudyConfig):
     """Pre-specified claims, Bonferroni-corrected across the family."""
     level = 1.0 - cfg.headline_alpha / 3
     names = cfg.scale.categories
     shallow, deepest = names[1], names[-1]
 
     def gap(name: str) -> Estimate | None:
+        if external is None:
+            return None
         a = internal.stratified.stratum(name).sensitivity
         b = external.stratified.stratum(name).sensitivity
         return None if a is None or b is None else difference(a, b, paired=False)
@@ -349,7 +379,8 @@ def _headline(internal: SetResult, external: SetResult, cfg: StudyConfig):
     ]
     return tuple(
         HeadlineClaim(text, est.at_level(level)) if est is not None
-        else HeadlineClaim(text, None, "a stratum is empty on one side")
+        else HeadlineClaim(text, None, "no external dataset" if external is None and "External"
+                           in text else "a stratum is empty on one side")
         for text, est in claims
     )
 
@@ -363,7 +394,9 @@ def make_split(records: Sequence[RadiographRecord], cfg: StudyConfig) -> Split:
     return patient_split(records, seed=cfg.seed, fractions=cfg.splits)
 
 
-def evaluate(internal: DatasetInputs, external: DatasetInputs, cfg: StudyConfig) -> EvaluationResult:
+def evaluate(
+    internal: DatasetInputs, external: DatasetInputs | None, cfg: StudyConfig
+) -> EvaluationResult:
     notes: list[str] = []
     split = make_split(internal.records, cfg)
     with warnings.catch_warnings(record=True) as caught:
@@ -383,7 +416,7 @@ def evaluate(internal: DatasetInputs, external: DatasetInputs, cfg: StudyConfig)
             for r in split[name]}
     test_seen = sum(r.group_key in seen for r in split["test"]) / len(split["test"])
 
-    val_table = _table(val, cfg.scale)
+    val_table = _table(_inventoried(val, notes), cfg.scale)
     opc = cfg.operating_point
     op = fit_operating_point(
         val_table.p_lesion, val_table.has_lesion, val_table.groups,
@@ -394,7 +427,12 @@ def evaluate(internal: DatasetInputs, external: DatasetInputs, cfg: StudyConfig)
     internal_result = _evaluate_set(test, op, cfg, cfg.seed, notes, allow_patient_overlap=e0)
     # A different seed: internal and external are independent samples, and the
     # independent-difference CI for the headline gaps requires it.
-    external_result = _evaluate_set(external, op, cfg, cfg.seed + 1, notes)
+    external_result = None
+    if external is None:
+        notes.append("no external dataset: rule 4 (external validation is the real number) "
+                     "has nothing behind it yet, so every number here is internal")
+    else:
+        external_result = _evaluate_set(external, op, cfg, cfg.seed + 1, notes)
     return EvaluationResult(
         config=cfg,
         splits=SplitResult(

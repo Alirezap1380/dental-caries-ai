@@ -53,6 +53,11 @@ class _Formatter:
         return "—" if est is None else str(est)
 
 
+def _sets(r: EvaluationResult) -> list:
+    """The evaluated sets present: internal always, external when there is one."""
+    return [s for s in (r.internal, r.external) if s is not None]
+
+
 def _table(header: Iterable[str], rows: Iterable[Iterable[object]]) -> str:
     header = list(header)
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
@@ -87,7 +92,7 @@ def _stratified_rows(
 
 def _section_data(r: EvaluationResult) -> str:
     rows = []
-    for s in (r.internal, r.external):
+    for s in _sets(r):
         d = s.summary
         rows.append([
             s.name, d.n_images, d.n_patients, s.n_teeth, d.max_images_per_patient,
@@ -139,7 +144,8 @@ def _section_agreement(f: _Formatter, r: EvaluationResult, figures: Mapping[str,
         "The unit is the tooth (FDI), so readers are paired with no box-matching step. "
         f"Cohen's kappa uses {a.weights} weights on the ordinal depth scale."),
         (f"- Krippendorff's alpha (ordinal, handles unread images): "
-        f"**{f.metric(a.krippendorff, 'Krippendorff alpha')}**"),
+        f"**{f.metric(a.krippendorff, 'Krippendorff alpha')}**" if a.krippendorff is not None
+         else f"- Agreement: {a.fleiss_reason}"),
         f"- Fleiss' kappa: {f.metric(a.fleiss, 'Fleiss kappa') if a.fleiss else a.fleiss_reason}",
         "Individual reader pairs (how much humans disagree; this is *not* the ceiling):",
         _table(["reader A", "reader B", "teeth", "kappa"],
@@ -211,6 +217,9 @@ def _section_agreement(f: _Formatter, r: EvaluationResult, figures: Mapping[str,
 
 def _section_stratified(f: _Formatter, r: EvaluationResult, figures: Mapping[str, str]) -> str:
     op = r.operating_point
+    sets = [("internal", r.internal.stratified)]
+    if r.external is not None:
+        sets.append(("external", r.external.stratified))
     parts = [
         "## 3. Depth-stratified tooth-level performance",
         (f"Operating point fitted on internal *validation* patients only. Deployment role: "
@@ -221,10 +230,9 @@ def _section_stratified(f: _Formatter, r: EvaluationResult, figures: Mapping[str
         f"> Rationale on record: {op.rationale}",
         "Reference standard: strict-majority consensus of each image's readers, per tooth.",
         _table(
-            ["depth", "n (internal)", "sensitivity (internal)", "AUC vs sound (internal)",
-             "n (external)", "sensitivity (external)", "AUC vs sound (external)"],
-            _stratified_rows(f, [("internal", r.internal.stratified),
-                                 ("external", r.external.stratified)]),
+            ["depth", *(f"{h} ({name})" for name, _ in sets
+                        for h in ("n", "sensitivity", "AUC vs sound"))],
+            _stratified_rows(f, sets),
         ),
     ]
     if "depth" in figures:
@@ -241,7 +249,7 @@ def _section_detection(f: _Formatter, r: EvaluationResult) -> str:
         "against every depth."),
     ]
     names = r.config.scale.categories[1:]
-    for s in (r.internal, r.external):
+    for s in _sets(r):
         rows = []
         for d in s.detection:
             sens = [f.metric(x.sensitivity, f"{s.name} {d.reader} lesion sensitivity ({x.name})",
@@ -260,7 +268,7 @@ def _section_detection(f: _Formatter, r: EvaluationResult) -> str:
 
 def _section_calibration(f: _Formatter, r: EvaluationResult, figures: Mapping[str, str]) -> str:
     rows = []
-    for s in (r.internal, r.external):
+    for s in _sets(r):
         c = s.calibration
         rows.append([
             s.name, c.n, f"{c.prevalence:.3f}", f"{c.mean_predicted:.3f}", f.plain(c.ece),
@@ -285,7 +293,7 @@ def _section_calibration(f: _Formatter, r: EvaluationResult, figures: Mapping[st
 def _section_abstention(f: _Formatter, r: EvaluationResult) -> str:
     op = r.operating_point
     rows = []
-    for s in (r.internal, r.external):
+    for s in _sets(r):
         x = s.selective
         rows.append([
             s.name, f.plain(x.coverage),
@@ -315,7 +323,7 @@ def _section_subgroups(f: _Formatter, r: EvaluationResult) -> str:
         "pooled per-age sensitivity would invent an age effect."),
     ]
     names = r.config.scale.categories[1:]
-    for s in (r.internal, r.external):
+    for s in _sets(r):
         for sg in s.subgroups:
             title = f"**{s.name}, by {sg.attribute}**"
             if sg.not_computable:

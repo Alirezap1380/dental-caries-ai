@@ -45,11 +45,11 @@ def depth_curve(r: EvaluationResult, path: Path) -> None:
     """Headline figure: tooth-level sensitivity by lesion depth, internal vs external."""
     fig, ax = _axes("Sensitivity by lesion depth (tooth level, 95% CI)", "sensitivity")
     names = [s.name for s in r.internal.stratified.strata]
-    for offset, (label, rep) in zip(
-        (-0.08, 0.08),
-        (("internal", r.internal.stratified), ("external", r.external.stratified)),
-        strict=True,
-    ):
+    sets = [("internal", r.internal.stratified)]
+    if r.external is not None:
+        sets.append(("external", r.external.stratified))
+    offsets = (-0.08, 0.08) if len(sets) == 2 else (0.0,)
+    for offset, (label, rep) in zip(offsets, sets, strict=True):
         xs, ys, lo, hi = [], [], [], []
         for i, s in enumerate(rep.strata):
             if s.sensitivity is None:
@@ -76,6 +76,8 @@ def reliability(r: EvaluationResult, path: Path) -> None:
     fig, ax = _axes("Reliability, per-tooth P(lesion)", "observed lesion rate")
     ax.plot([0, 1], [0, 1], linestyle="--", color=INK_2, linewidth=1, label="perfect calibration")
     for label, s in (("internal", r.internal), ("external", r.external)):
+        if s is None:
+            continue
         bins = s.calibration.curve.bins
         ax.plot([b.mean_predicted for b in bins], [b.observed for b in bins], "o-",
                 color=SERIES[label], linewidth=2, markersize=6, label=label)
