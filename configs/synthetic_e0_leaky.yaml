@@ -1,0 +1,57 @@
+# Experiment E0 on synthetic data: the leaky protocol, run on purpose.
+# A naive image-level split, several images per patient (so the same dentition
+# lands in both train and test), and a simulated model that memorises the
+# patients it trained on. The report's 0.95 tripwire MUST fire on this config;
+# tests/test_pipeline.py asserts that it does.
+name: synthetic_e0_leaky
+seed: 20261009
+n_boot: 2000
+scale: dentex_depth
+split: image_naive
+
+# Patient-level. "train" is unused here: the simulated model is not trained.
+splits:
+  train: 0.6
+  val: 0.2
+  test: 0.2
+
+# Structured as: deployment role -> the asymmetry that follows -> chosen target ->
+# what changes if the role changes. The code rejects autonomous_triage unless
+# specificity is the binding constraint. See README "Operating point".
+operating_point:
+  deployment_role: second_reader
+  constraint: sensitivity
+  target: 0.80
+  coverage_target: 0.85
+  rationale: >-
+    Deployment role: second reader. A dentist adjudicates every flag before
+    anything is done to the tooth.
+    Asymmetry: caries inverts the usual screening asymmetry. A missed early lesion
+    is found later and restored instead of arrested, a bounded and partly
+    recoverable harm. A false positive that is acted on drills sound tooth
+    structure and starts the restorative cycle. In this role a false positive
+    costs review time rather than tooth structure (residual risk: a flag can
+    anchor the reviewer towards treatment), so sensitivity may bind.
+    Target: sensitivity >= 0.80 against the consensus reference. This is
+    provisional, to be re-anchored to the readers' own sensitivity once the
+    agreement analysis runs on real data: a second reader far more sensitive
+    than the readers mostly adds flags they will overrule.
+    If the role changes to autonomous triage (a flag drives treatment),
+    specificity becomes the binding constraint, its target is set first, and
+    sensitivity becomes the reported cost.
+
+detection:
+  iou_threshold: 0.5
+  score_threshold: 0.3
+
+# Family-wise alpha for the three pre-specified headline claims (Bonferroni).
+headline_alpha: 0.05
+
+synthetic:
+  internal_patients: 700
+  external_patients: 250
+  # The external set ships no age/sex, so the report has to say subgroups
+  # are not computable there rather than omit them.
+  external_demographics: false
+  memorize_train: true
+  images_per_patient: [2, 4]

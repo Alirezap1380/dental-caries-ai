@@ -1,0 +1,67 @@
+# Data — never commit radiographs or annotations.
+# These datasets are released under data use agreements that forbid redistribution.
+#
+# Anchored with a leading slash on purpose: an unanchored `data/` also matches
+# src/dcai/data/ and silently drops the loader package from the repo. And it is
+# `/data/*` rather than `/data/` because git cannot re-include a file whose parent
+# directory is excluded, so the `!` lines below would otherwise be dead.
+/data/*
+!/data/.gitkeep
+!/data/README.md
+*.dcm
+*.nii
+*.nii.gz
+
+# Belt and braces: radiographs are PNG/JPG/TIFF. Ignore raster images everywhere so
+# one dropped into scripts/ or a notebook dir can't be committed by accident.
+# Figures meant for the write-up go in docs/figures/ and are allowlisted explicitly.
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+*.bmp
+!docs/figures/*.png
+!docs/figures/*.svg
+*.npy
+*.npz
+*.h5
+*.zip
+*.tar
+*.tar.gz
+
+# Model artefacts
+runs/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.safetensors
+wandb/
+mlruns/
+
+# Results that are regenerable
+results/**/*.pdf
+!results/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

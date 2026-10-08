@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dcai"
+version = "0.1.0"
+description = "Caries detection on dental radiographs with an honest uncertainty budget"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Alireza Parandoost" }]
+
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-learn>=1.3",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "pillow>=10.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Training stack. Deliberately separate: the evaluation harness in src/dcai/eval
+# is pure numpy/scipy/sklearn and must stay importable without a GPU stack.
+train = [
+    "torch>=2.2",
+    "torchvision>=0.17",
+    "timm>=0.9",
+    "albumentations>=1.4",
+    "pycocotools>=2.0.7",
+    "ultralytics>=8.2",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+# Unexpected warnings (e.g. sklearn on an under-populated stratum) are often the
+# first sign a split or metric is degenerate; fail rather than scroll past them.
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
