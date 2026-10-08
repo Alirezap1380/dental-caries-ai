@@ -1,0 +1,86 @@
+# Tufts Dental Database -> DENTEX label mapping.
+#
+# DENTEX labels a diagnosis per box: caries, deep caries, periapical lesion,
+# impacted tooth. Tufts describes each abnormality on five descriptive axes. This
+# file says which Tufts descriptions count as which DENTEX class, and why.
+#
+# Rules this file follows (enforced by dcai/data/label_mapping.py):
+# - Every mapping carries a rationale.
+# - External results are reported ONLY for mappings with status `unambiguous`,
+#   and only once `verified_against_files: true`. Until then nothing is reportable.
+# - Value vocabularies below are PLACEHOLDERS written from the axis names, before
+#   reading the released annotation files. Replace them with the exact strings
+#   in the files, revisit every status, then flip `verified_against_files` and
+#   bump `version`. Expect this to change.
+version: 0.1.0
+verified_against_files: false
+
+source:
+  dataset: tufts
+  axes:
+    - anatomical_location
+    - peripheral_characteristics
+    - radiodensity
+    - effect_on_surrounding_structure
+    - abnormality_category
+
+target:
+  dataset: dentex
+  classes: [caries, deep_caries, periapical_lesion, impacted_tooth]
+  # Unions of target classes that a mapping may resolve to when the source cannot
+  # separate them. Reporting a merged class may still be blocked (see `blocked_by`).
+  merged:
+    any_caries: [caries, deep_caries]
+
+mappings:
+  - target: periapical_lesion
+    status: unambiguous
+    conditions:
+      - {axis: anatomical_location, values: [periapical]}
+      - {axis: radiodensity, values: [radiolucent]}
+    rationale: >-
+      DENTEX's periapical lesion is a radiolucency at the root apex. Tufts
+      encodes location and density on separate axes, so their conjunction
+      reproduces the DENTEX definition without interpretation. Requiring
+      radiolucency excludes radiopaque periapical findings (condensing osteitis,
+      cementoblastoma), which DENTEX does not label. Mixed-density periapical
+      findings are left unmapped rather than guessed.
+
+  - target: impacted_tooth
+    status: ambiguous
+    conditions:
+      - {axis: abnormality_category, values: [impacted_tooth]}
+    rationale: >-
+      Impaction is a positional finding, not a density finding. It maps one to
+      one only if Tufts has an explicit category for it. If Tufts instead
+      describes impaction through location and effect-on-surrounding-structure,
+      the mapping needs a rule and becomes a judgement call. Stays ambiguous
+      until the files show which.
+
+  - target: any_caries
+    status: unambiguous
+    blocked_by: rule_2
+    conditions:
+      - {axis: abnormality_category, values: [caries]}
+    rationale: >-
+      The Tufts axes describe appearance and location, not lesion depth, so
+      DENTEX's caries / deep-caries split cannot be recovered. Only the union is
+      mappable. Reporting it pools across depth, which rule 2 forbids, so it is
+      blocked until a decision is made (see README).
+
+  - target: deep_caries
+    status: ambiguous
+    conditions:
+      - {axis: abnormality_category, values: [caries]}
+      - {axis: effect_on_surrounding_structure, values: [pulp_involvement]}
+    rationale: >-
+      A tempting depth proxy: caries plus an effect on the pulp. But
+      "effect on surrounding structure" most likely describes bone and
+      neighbouring teeth rather than pulpal extension. Using it as a depth label
+      would invent information the annotators did not record. Not reported.
+
+# Tufts findings with no DENTEX counterpart (cysts, tumours, other bone lesions).
+# A DENTEX-trained model has never seen them labelled. Counting such an image as a
+# clean negative would score a correct "something is here" as a false positive.
+# So they are excluded from the negatives of every class they could be confused with.
+unmapped_findings: exclude_from_negatives

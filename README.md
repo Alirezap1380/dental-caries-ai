@@ -80,6 +80,20 @@ that can silently go wrong:
 4. If the inventory is predicted, report enumeration accuracy alongside every
    tooth-level metric.
 
+## Open decision: external caries on Tufts vs rule 2
+
+The Tufts axes do not appear to encode lesion depth, so DENTEX's caries /
+deep-caries split cannot be recovered on Tufts. Only the union `any_caries` maps.
+Reporting it externally would pool across depth, which rule 2 forbids, so the
+mapping is marked `blocked_by: rule_2`. Options:
+
+1. Report external caries pooled, labelled as an explicit, documented exception to
+   rule 2, with the internal depth-stratified result shown alongside it.
+2. Find a depth proxy in the Tufts annotations, if the real files support one.
+   The draft rejects "effect on surrounding structure" as a proxy.
+3. Report no external caries result on Tufts, and carry external validation for
+   caries on the bitewing track (ACTA-Bw25 has staging).
+
 ## Status
 
 - [x] `data/`: unified schema (incl. tooth inventory), patient-level splits with enforced leakage checks
@@ -91,8 +105,11 @@ that can silently go wrong:
   - clean: [`results/synthetic/report.md`](results/synthetic/report.md), where the tripwire stays quiet
   - deliberately leaky E0: [`results/synthetic_e0_leaky/report.md`](results/synthetic_e0_leaky/report.md),
     where the tripwire fires (also a permanent test)
-- [ ] `probes/recover_groups.py`: recover patient and site structure DENTEX may not ship
-- [ ] `configs/label_mapping_tufts_dentex.yaml`
+- [x] `probes/recover_groups.py`: recover patient groups (pHash + embedding near-duplicates,
+  mixture-gated cutoff) and sites (acquisition fingerprints), with a non-circular site probe and
+  a prevalence test. Synthetic run: [`results/synthetic_recovery/report.md`](results/synthetic_recovery/report.md)
+- [x] `configs/label_mapping_tufts_dentex.yaml` v0.1.0 (draft; nothing reportable until
+  verified against the Tufts files)
 - [ ] loaders (blocked on data access)
 - [ ] baselines
 
@@ -101,6 +118,7 @@ that can silently go wrong:
 ```bash
 .venv/bin/python scripts/run_experiment.py --config configs/synthetic.yaml --out results/synthetic
 .venv/bin/python scripts/run_experiment.py --config configs/synthetic_e0_leaky.yaml --out results/synthetic_e0_leaky
+.venv/bin/python scripts/recover_groups.py --synthetic --out results/synthetic_recovery
 ```
 
 ## Setup
