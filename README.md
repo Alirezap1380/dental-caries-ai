@@ -80,19 +80,30 @@ that can silently go wrong:
 4. If the inventory is predicted, report enumeration accuracy alongside every
    tooth-level metric.
 
-## Open decision: external caries on Tufts vs rule 2
+## External validation on Tufts: caries as a domain-shift delta
 
-The Tufts axes do not appear to encode lesion depth, so DENTEX's caries /
-deep-caries split cannot be recovered on Tufts. Only the union `any_caries` maps.
-Reporting it externally would pool across depth, which rule 2 forbids, so the
-mapping is marked `blocked_by: rule_2`. Options:
+The Tufts axes do not encode lesion depth, so DENTEX's caries / deep-caries split
+cannot be recovered on Tufts and only the union `any_caries` maps. Rule 2 forbids
+pooling across depth in *performance claims*. A cross-dataset comparison on
+identically pooled classes is a *domain-shift measurement*, not a performance
+claim. So `any_caries` is reported only as internal-pooled minus external-pooled
+on the same mapped definition, never as a standalone number. This is enforced in
+code: the mapping marks it `report_as: domain_shift_delta`, `reportable()`
+excludes it, and `dcai.eval.domain_shift` keeps only the delta. The
+depth-stratified result stays on the internal side, where the labels support it.
+The rejected depth proxy ("effect on surrounding structure") records bone
+response, not caries penetration.
 
-1. Report external caries pooled, labelled as an explicit, documented exception to
-   rule 2, with the internal depth-stratified result shown alongside it.
-2. Find a depth proxy in the Tufts annotations, if the real files support one.
-   The draft rejects "effect on surrounding structure" as a proxy.
-3. Report no external caries result on Tufts, and carry external validation for
-   caries on the bitewing track (ACTA-Bw25 has staging).
+Staged external validation on bitewings (ACTA-Bw25) remains a second track,
+pending access.
+
+## Licence
+
+Code in this repository: MIT. **The DENTEX data is CC-BY-NC-SA 4.0:
+non-commercial use only, with attribution, and share-alike.** Share-alike
+plausibly reaches model weights trained on it, so treat any weights derived from
+DENTEX as CC-BY-NC-SA 4.0 and non-commercial. The data itself is never
+committed (`/data/*` is gitignored).
 
 ## Status
 

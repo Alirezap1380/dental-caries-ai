@@ -5,6 +5,12 @@ differs by site, then any apparent diagnostic skill is suspect: the model can
 score well by recognising the scanner. A high AUC here is the finding, not a
 success to celebrate.
 
+The claim is asymmetric, and reports must say so. A positive result (site
+predictable) is informative: the images carry site, and this representation
+exposes it to the model. A null says only that *this representation* does not
+carry site linearly. It does not say the images don't. A different encoder,
+or a nonlinear probe, may find it. A null is never an all-clear.
+
 Two guards:
 - Cross-validation is grouped by patient, so the probe cannot score by
   recognising a patient it saw in training.

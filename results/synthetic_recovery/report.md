@@ -32,6 +32,8 @@ Caries prevalence by recovered site: site_0 0.409 [0.326, 0.493]; site_1 0.226 [
 
 Site probe on raw-intensity thumbnails (torch-free fallback), never on the fingerprints the sites were clustered from: macro AUC **1.000 [1.000, 1.000]** (0.5 = chance), patient-grouped 5-fold CV.
 
+A positive probe is the informative direction: the images carry site, and this representation exposes it. (A null would only have cleared this representation, not the images.)
+
 **Shortcut risk: site is reliably predictable from what the model sees, AND prevalence differs by site.** Diagnostic performance on this data is suspect until it is shown to survive site-stratified evaluation.
 
 ## Validation against the generator's ground truth

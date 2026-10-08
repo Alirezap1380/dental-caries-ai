@@ -8,11 +8,14 @@
 # - Every mapping carries a rationale.
 # - External results are reported ONLY for mappings with status `unambiguous`,
 #   and only once `verified_against_files: true`. Until then nothing is reportable.
+# - `report_as: domain_shift_delta` mappings are never reported as standalone
+#   numbers, only as internal-minus-external on the same pooled definition
+#   (dcai.eval.domain_shift).
 # - Value vocabularies below are PLACEHOLDERS written from the axis names, before
 #   reading the released annotation files. Replace them with the exact strings
 #   in the files, revisit every status, then flip `verified_against_files` and
 #   bump `version`. Expect this to change.
-version: 0.1.0
+version: 0.2.0
 verified_against_files: false
 
 source:
@@ -28,7 +31,7 @@ target:
   dataset: dentex
   classes: [caries, deep_caries, periapical_lesion, impacted_tooth]
   # Unions of target classes that a mapping may resolve to when the source cannot
-  # separate them. Reporting a merged class may still be blocked (see `blocked_by`).
+  # separate them.
   merged:
     any_caries: [caries, deep_caries]
 
@@ -59,14 +62,18 @@ mappings:
 
   - target: any_caries
     status: unambiguous
-    blocked_by: rule_2
+    report_as: domain_shift_delta
     conditions:
       - {axis: abnormality_category, values: [caries]}
     rationale: >-
       The Tufts axes describe appearance and location, not lesion depth, so
       DENTEX's caries / deep-caries split cannot be recovered. Only the union is
-      mappable. Reporting it pools across depth, which rule 2 forbids, so it is
-      blocked until a decision is made (see README).
+      mappable. Rule 2 forbids pooling across depth in performance claims, so
+      this class is never reported as a standalone number. It is reported only as
+      a domain-shift measurement: internal-pooled minus external-pooled on this
+      same definition. Both sides pool identically, so the comparison is like for
+      like. The depth-stratified result stays on the internal side, where the
+      labels support it.
 
   - target: deep_caries
     status: ambiguous
@@ -74,10 +81,10 @@ mappings:
       - {axis: abnormality_category, values: [caries]}
       - {axis: effect_on_surrounding_structure, values: [pulp_involvement]}
     rationale: >-
-      A tempting depth proxy: caries plus an effect on the pulp. But
-      "effect on surrounding structure" most likely describes bone and
-      neighbouring teeth rather than pulpal extension. Using it as a depth label
-      would invent information the annotators did not record. Not reported.
+      A tempting depth proxy: caries plus an effect on the pulp. Rejected:
+      "effect on surrounding structure" records bone response (the periapical
+      axis), not caries penetration. A fabricated depth axis would be worse than
+      an honest pooled number. Not reported.
 
 # Tufts findings with no DENTEX counterpart (cysts, tumours, other bone lesions).
 # A DENTEX-trained model has never seen them labelled. Counting such an image as a

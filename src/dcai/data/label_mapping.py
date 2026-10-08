@@ -7,9 +7,10 @@ per class, and this module enforces what may be reported from it:
 
 - Only `unambiguous` mappings are reportable, and only once the file has been
   checked against the real annotation files (`verified_against_files`).
-- A mapping can be `blocked_by` a methodology rule. The merged any-caries class,
-  for instance, would pool across depth (rule 2). Blocked mappings are never
-  reportable, however unambiguous they are.
+- A mapping can be `report_as: domain_shift_delta`. The merged any-caries class
+  pools across depth, which rule 2 forbids in performance claims, so it is never
+  reportable standalone. Its only route out is `dcai.eval.domain_shift`: a
+  delta against the internal result on the same pooled definition.
 """
 
 from __future__ import annotations
@@ -27,6 +28,11 @@ class MappingStatus(str, Enum):
     AMBIGUOUS = "ambiguous"
 
 
+class ReportAs(str, Enum):
+    STANDALONE = "standalone"
+    DOMAIN_SHIFT_DELTA = "domain_shift_delta"  # only as internal - external, same definition
+
+
 @dataclass(frozen=True)
 class Condition:
     axis: str
@@ -39,7 +45,7 @@ class ClassMapping:
     status: MappingStatus
     conditions: tuple[Condition, ...]
     rationale: str
-    blocked_by: str | None = None
+    report_as: ReportAs = ReportAs.STANDALONE
 
     def matches(self, description: Mapping[str, str]) -> bool:
         """True if a source annotation's axis values satisfy every condition."""
@@ -101,24 +107,34 @@ class LabelMapping:
                     conditions=tuple(Condition(c["axis"], frozenset(c["values"]))
                                      for c in m["conditions"]),
                     rationale=m.get("rationale", ""),
-                    blocked_by=m.get("blocked_by"),
+                    report_as=ReportAs(m.get("report_as", "standalone")),
                 )
                 for m in raw["mappings"]
             ),
             unmapped_findings=raw["unmapped_findings"],
         )
 
-    def reportable(self) -> tuple[str, ...]:
-        """Target classes whose external results may be reported. Empty until verified."""
+    def _usable(self, report_as: ReportAs) -> tuple[str, ...]:
         if not self.verified_against_files:
             return ()
         return tuple(
             m.target for m in self.mappings
-            if m.status is MappingStatus.UNAMBIGUOUS and m.blocked_by is None
+            if m.status is MappingStatus.UNAMBIGUOUS and m.report_as is report_as
         )
 
-    def blocked(self) -> dict[str, str]:
-        return {m.target: m.blocked_by for m in self.mappings if m.blocked_by}
+    def reportable(self) -> tuple[str, ...]:
+        """Classes whose external results may be reported standalone. Empty until verified."""
+        return self._usable(ReportAs.STANDALONE)
+
+    def delta_only(self) -> tuple[str, ...]:
+        """Classes reportable only as a domain-shift delta. Empty until verified."""
+        return self._usable(ReportAs.DOMAIN_SHIFT_DELTA)
+
+    def mapping_for(self, target: str) -> ClassMapping:
+        for m in self.mappings:
+            if m.target == target:
+                return m
+        raise KeyError(f"no mapping for {target!r}")
 
     def classify(self, description: Mapping[str, str]) -> tuple[str, ...]:
         """Every mapped target a source annotation satisfies (may be several, or none).

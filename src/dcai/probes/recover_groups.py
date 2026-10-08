@@ -602,11 +602,16 @@ def recovery_markdown(r: RecoveryReport, *, synthetic: bool) -> str:
         (f"Site probe on {r.probe_feature_name}, never on the fingerprints the sites were "
         f"clustered from: macro AUC **{st.probe.auc}** (0.5 = chance), patient-grouped "
         f"{st.probe.n_splits}-fold CV."),
-        "**Shortcut risk: site is reliably predictable from what the model sees, AND "
-        "prevalence differs by site.** Diagnostic performance on this data is suspect "
-        "until it is shown to survive site-stratified evaluation." if st.shortcut_risk else
-        "No shortcut risk detected *in this feature space*: either site is not reliably "
-        "predictable from it, or prevalence does not differ. Repeat with the diagnostic "
-        "model's own encoder before concluding anything.",
+        ("A positive probe is the informative direction: the images carry site, and this "
+         "representation exposes it. (A null would only have cleared this representation, "
+         "not the images.)\n\n"
+         "**Shortcut risk: site is reliably predictable from what the model sees, AND "
+         "prevalence differs by site.** Diagnostic performance on this data is suspect "
+         "until it is shown to survive site-stratified evaluation.") if st.shortcut_risk else
+        ("No shortcut risk detected, and this is a null, which is the weak direction. "
+         "It says only that *this representation* does not carry site linearly, or that "
+         "prevalence does not differ. It does not say the images are site-free: another "
+         "encoder or a nonlinear probe may find what this one did not. Never read it as "
+         "an all-clear."),
     ]
     return "\n\n".join(lines) + "\n"
