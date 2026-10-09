@@ -255,9 +255,11 @@ python scripts/run_stage1.py --config configs/dentex_stage2_frozen.yaml \
 The evaluation harness (`src/dcai/eval/`) is pure numpy/scipy/scikit-learn and imports
 without torch, so it is testable in CI. The training stack lives behind the `[train]` extra.
 
-Data is not committed and is gitignored. DENTEX is available from
-[HuggingFace](https://huggingface.co/datasets/ibrahimhamamci/DENTEX) under **CC-BY-NC-SA
-4.0**: non-commercial use only, and share-alike plausibly reaches weights derived from it.
+Code in this repository is MIT-licensed (see [`LICENSE`](LICENSE)). Data is not committed
+and is gitignored. DENTEX is available from
+[HuggingFace](https://huggingface.co/datasets/ibrahimhamamci/DENTEX) under
+**CC-BY-NC-SA 4.0**: non-commercial use only, and share-alike plausibly reaches weights
+derived from it.
 
 ---
 
