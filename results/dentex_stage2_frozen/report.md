@@ -1,10 +1,16 @@
 # Evaluation report: dentex_stage2_frozen_resnet50
 
+## Summary
+
+**An honest reimplementation yields a system a clinician could not use.** At a second-reader operating point fitted on validation for sensitivity ≥ 0.80, the model flags **7.0 [6.3, 7.9] healthy teeth on every panoramic** (specificity 0.711 [0.676, 0.740] on about 29 teeth per image). A second reader that adds seven false flags to each image costs more review time than it saves. This is the honest baseline the rest of the project has to beat.
+
+Cohort caveat, repeated in every tooth-level section: 253 of 755 DENTEX images, the ones with an enumeration-subset copy. They are not a random subset: most sit in one recovered acquisition cluster and they carry fewer deep, periapical and impacted findings (see Integrity checks). These numbers describe that cluster's dentition, not DENTEX as a whole.
+
 ## Model and data, for this run
 
 - Data: DENTEX (HuggingFace `ibrahimhamamci/DENTEX`, CC-BY-NC-SA 4.0). Evaluation set: 755 depth-labelled images (diagnosis train + validation), of which **253** have a human tooth inventory from an enumeration-subset copy. Every number below uses those images only.
 
-- Patients: recovered from pixels (0 probable same-patient pairs; mixture separated: False; Ashman's D 0.75). The split is over recovered patients.
+- Patients: recovery finds no repeat visits, under two representations. Pixel thumbnails: 0 pairs (Ashman's D 0.75, no separated mode). ImageNet ResNet-50 full-image features: 0 pairs (Ashman's D 2.07; ΔBIC two − one components +1.1, so no second mode). We treat this as a real null: the card's "randomly selected" plausibly means one image per patient. Rule 1's leakage evidence on DENTEX is the byte-identical duplicates (see the audit), and the split is effectively per image.
 
 - Stage 2 only: frozen ImageNet ResNet-50 features on human tooth crops, plus a multinomial logistic head (C = 0.0003, chosen by patient-grouped CV log-loss) trained on 4372 train-partition teeth. No stage-1 enumerator yet: the tooth boxes are human.
 
@@ -83,6 +89,8 @@ Ceiling not computable: rule 3 has no data on this cohort: one reader only (cons
 
 ## 3. Depth-stratified tooth-level performance
 
+**Cohort:** 253 of 755 DENTEX images, the ones with an enumeration-subset copy. They are not a random subset: most sit in one recovered acquisition cluster and they carry fewer deep, periapical and impacted findings (see Integrity checks). These numbers describe that cluster's dentition, not DENTEX as a whole.
+
 Operating point fitted on internal *validation* patients only. Deployment role: **second reader**; binding constraint: **sensitivity ≥ 0.80** (achieved 0.800 on validation) at threshold **0.122** on P(lesion). It is frozen for internal test and external.
 
 > Rationale on record: Deployment role: second reader. A dentist adjudicates every flag before anything is done to the tooth. Asymmetry: caries inverts the usual screening asymmetry. A missed early lesion is found later and restored instead of arrested, a bounded and partly recoverable harm. A false positive that is acted on drills sound tooth structure and starts the restorative cycle. In this role a false positive costs review time rather than tooth structure (residual risk: a flag can anchor the reviewer towards treatment), so sensitivity may bind. Target: sensitivity >= 0.80 against the consensus reference. This is provisional, to be re-anchored to the readers' own sensitivity once the agreement analysis runs on real data: a second reader far more sensitive than the readers mostly adds flags they will overrule. If the role changes to autonomous triage (a flag drives treatment), specificity becomes the binding constraint, its target is set first, and sensitivity becomes the reported cost.
@@ -98,7 +106,11 @@ Reference standard: strict-majority consensus of each image's readers, per tooth
 
 ![Sensitivity by lesion depth](figures/depth_sensitivity.svg)
 
+*Sensitivity by lesion depth. Cohort: 253 of 755 DENTEX images, the ones with an enumeration-subset copy. They are not a random subset: most sit in one recovered acquisition cluster and they carry fewer deep, periapical and impacted findings (see Integrity checks). These numbers describe that cluster's dentition, not DENTEX as a whole.*
+
 ## 4. Lesion-level detection, per reader
+
+**Cohort:** 253 of 755 DENTEX images, the ones with an enumeration-subset copy. They are not a random subset: most sit in one recovered acquisition cluster and they carry fewer deep, periapical and impacted findings (see Integrity checks). These numbers describe that cluster's dentition, not DENTEX as a whole.
 
 Boxes matched to each reader's own lesions (IoU ≥ 0.5); sensitivity and FP/image at box score ≥ 0.122 (the operating threshold). AP per depth ignores lesions of the other depth, and background false positives count against every depth.
 
@@ -110,6 +122,8 @@ Boxes matched to each reader's own lesions (IoU ≥ 0.5); sensitivity and FP/ima
 
 ## 5. Calibration (tooth level)
 
+**Cohort:** 253 of 755 DENTEX images, the ones with an enumeration-subset copy. They are not a random subset: most sit in one recovered acquisition cluster and they carry fewer deep, periapical and impacted findings (see Integrity checks). These numbers describe that cluster's dentition, not DENTEX as a whole.
+
 Per-tooth P(lesion) against the consensus reference. Box scores are deliberately not calibrated, because a detector chooses how many boxes to emit. The noise floor is the 95th percentile of ECE for a perfectly calibrated model at this n. Slope < 1 means overconfident; intercept < 0 means it over-predicts.
 
 | set | teeth | prevalence | mean P | ECE (quantile bins) | ECE noise floor | exceeds floor | Brier | slope | intercept |
@@ -118,7 +132,11 @@ Per-tooth P(lesion) against the consensus reference. Box scores are deliberately
 
 ![Reliability diagram](figures/reliability.svg)
 
+*Reliability diagram. Cohort: 253 of 755 DENTEX images, the ones with an enumeration-subset copy. They are not a random subset: most sit in one recovered acquisition cluster and they carry fewer deep, periapical and impacted findings (see Integrity checks). These numbers describe that cluster's dentition, not DENTEX as a whole.*
+
 ## 6. Abstention at the operating point
+
+**Cohort:** 253 of 755 DENTEX images, the ones with an enumeration-subset copy. They are not a random subset: most sit in one recovered acquisition cluster and they carry fewer deep, periapical and impacted findings (see Integrity checks). These numbers describe that cluster's dentition, not DENTEX as a whole.
 
 Teeth within ±0.028 of the threshold are referred to a clinician; the band was sized on validation for 85.0% coverage. *Missed positive rate* is lesions the system cleared without referral, as a share of all lesions. That is the number that matters clinically.
 
@@ -140,3 +158,22 @@ Depth-stratified within every subgroup: age is confounded with lesion depth, so 
 - internal test, subgroups by sex: no sex metadata on any of 1459 units: not computable on this data
 - no external dataset: rule 4 (external validation is the real number) has nothing behind it yet, so every number here is internal
 - internal test: rule 3 has no data on this cohort: one reader only (consensus), so inter-observer agreement and the human ceiling are not computable
+
+## Deep caries: detection difficulty or class imbalance?
+
+Section 3's sensitivity is **detection-only**: a tooth counts as detected when P(lesion) = 1 − P(sound) clears the threshold, whatever depth the model calls. The second column below adds whether the depth was also called correctly.
+
+| reference depth | test teeth | lesion detected (any caries class) | depth called correctly |
+|---|---|---|---|
+| caries | 190 | 0.789 [0.723, 0.853] | 0.789 [0.723, 0.853] |
+| deep_caries | 35 | 0.600 [0.441, 0.759] | 0.000 [0.000, 0.000] |
+
+Training teeth per class (sound / caries / deep): [3769, 521, 82]. Of the 35 deep-caries test teeth, 100% get P(caries) > P(deep). Of the 14 missed, 86% sit just below the threshold (P(lesion) between 0.061 and 0.122); median P(lesion) of missed deep teeth 0.106.
+
+Binary head (sound vs any caries, same features, threshold 0.127 fitted on validation): deep-caries sensitivity **0.686 [0.514, 0.857]** against 0.600 [0.441, 0.759] for the 3-class head (paired difference 0.086 [-0.032, 0.226]); shallow-caries sensitivity 0.784 [0.703, 0.858]. AUC vs sound, shallow / deep: 3-class 0.811 / 0.768; binary 0.810 / 0.777.
+
+Deep minus shallow AUC vs sound (binary head, patient-grouped, paired resamples): -0.033 [-0.094, 0.024].
+
+**Depth calls: imbalance.** The 3-class head calls deep caries on 0 of 35 deep teeth. With 82 deep teeth among 4372 training teeth, regularisation shrinks the rare class until it is never the argmax. Depth-correct performance on deep caries is a class-imbalance failure, not a property of the lesions.
+
+**Detection: unresolved at this sample size.** The binary head's gain on deep lesions (0.086 [-0.032, 0.226]) and the deep-minus-shallow AUC gap (-0.033 [-0.094, 0.024]) both have intervals that include 0. What is clear: 86% of the missed deep lesions sit just below the threshold, so the shortfall is mostly a margin effect near the operating point, not lesions the features cannot see.

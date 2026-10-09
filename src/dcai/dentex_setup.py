@@ -97,11 +97,32 @@ class PatientRecoveryError(RuntimeError):
     """Patient recovery left a near-duplicate pair in different groups."""
 
 
+def resnet_image_embeddings(records: Sequence[RadiographRecord], cache: Path) -> np.ndarray:
+    """ImageNet ResNet-50 global features of each whole panoramic (cached by image id)."""
+    from dcai.models.encoders import FrozenResNet50
+    from dcai.probes.recover_groups import _resize, load_gray
+
+    ids = [r.image_id for r in records]
+    if cache.exists():
+        data = np.load(cache)
+        if list(data["ids"]) == ids:
+            return data["emb"]
+    encoder = FrozenResNet50()
+    emb = np.array([encoder(_resize(load_gray(Path(r.path)), (448, 960))[None].astype(np.float32))[0]
+                    for r in records])
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(cache, ids=np.array(ids), emb=emb)
+    return emb
+
+
 @dataclass(frozen=True)
 class Prepared:
     release: DentexRelease
     records: list[RadiographRecord]  # all 755, patient ids from recovery
     recovery: PatientRecovery
+    # Second opinion from a learned representation. If it finds pairs the pixel
+    # recovery missed, `prepare` stops: the split would be wrong.
+    resnet_recovery: PatientRecovery
     near_pairs: list[str]
     selection_table: str
     selection_effect: bool
@@ -120,9 +141,19 @@ def prepare(raw: Path, work: Path, *, seed: int, n_boot: int,
     recovery = recover_patients([r.image_id for r in rel.records],
                                 np.array([sigs[h].phash for h in shas]),
                                 np.array([sigs[h].thumb for h in shas]), seed=seed)
+    resnet = recover_patients([r.image_id for r in rel.records],
+                              np.zeros((len(shas), 64), dtype=bool),  # embedding evidence only
+                              resnet_image_embeddings(rel.records,
+                                                      cache / "resnet50_image_embeddings.npz"),
+                              seed=seed, max_hamming=-1)
+    missed = [p for p in resnet.pairs if recovery.group_of[p.a] != recovery.group_of[p.b]]
+    if missed:
+        raise PatientRecoveryError(
+            f"ResNet-50 embeddings declare {len(missed)} same-patient pair(s) the pixel "
+            "recovery did not; merge them before splitting")
     records = with_recovered_patients(list(rel.records), recovery)
     near_pairs = duplicate_check(records, sigs, recovery)
     table, selected = selection_check(
         records, {r.image_id for r in records if r.teeth_present is not None},
         seed=seed, n_boot=n_boot)
-    return Prepared(rel, records, recovery, near_pairs, table, selected)
+    return Prepared(rel, records, recovery, resnet, near_pairs, table, selected)

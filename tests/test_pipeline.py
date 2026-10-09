@@ -201,3 +201,16 @@ def test_boxes_can_be_scored_at_the_operating_threshold(tmp_path: Path) -> None:
     r = evaluate(*synthetic_inputs(cfg), cfg)
     assert r.internal.detection[0].report.threshold == r.operating_point.threshold
     assert "(the operating threshold)" in render_markdown(r, synthetic=True)
+
+
+def test_cohort_note_leads_tooth_level_sections_and_captions(small_run, tmp_path: Path) -> None:
+    _, r = small_run
+    md = render_markdown(r, synthetic=True, figures=write_figures(r, tmp_path),
+                         cohort_note="one acquisition cluster")
+    for heading in ("## 3.", "## 4.", "## 5.", "## 6."):
+        section = md[md.index(heading):]
+        first_paragraph = section.split("\n\n")[1]
+        assert first_paragraph == "**Cohort:** one acquisition cluster"
+    assert "*Sensitivity by lesion depth. Cohort: one acquisition cluster*" in md
+    assert "*Reliability diagram. Cohort: one acquisition cluster*" in md
+    assert md.count("Cohort:") == 6

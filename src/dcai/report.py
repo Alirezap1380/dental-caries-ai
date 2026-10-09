@@ -369,19 +369,42 @@ def _section_headline(r: EvaluationResult) -> str:
     ])
 
 
+def _with_cohort(section: str, note: str | None) -> str:
+    """Lead a section with the cohort caveat, and repeat it under every figure.
+
+    A selection effect stated once in a header is a footnote; stated where each
+    number and figure appears, it cannot be read past.
+    """
+    if not note:
+        return section
+    heading, rest = section.split("\n\n", 1)
+    out = []
+    for block in rest.split("\n\n"):
+        out.append(block)
+        if block.startswith("![") and "](" in block:
+            alt = block[2:block.index("](")]
+            out.append(f"*{alt}. Cohort: {note}*")
+    return "\n\n".join([heading, f"**Cohort:** {note}", *out])
+
+
 def render_markdown(
-    r: EvaluationResult, *, synthetic: bool, figures: Mapping[str, str] | None = None
+    r: EvaluationResult,
+    *,
+    synthetic: bool,
+    figures: Mapping[str, str] | None = None,
+    cohort_note: str | None = None,
 ) -> str:
+    """`cohort_note`: a selection caveat that leads every tooth-level section and caption."""
     figures = figures or {}
     f = _Formatter()
     body = [
         _section_headline(r),
         _section_data(r),
         _section_agreement(f, r, figures),
-        _section_stratified(f, r, figures),
-        _section_detection(f, r),
-        _section_calibration(f, r, figures),
-        _section_abstention(f, r),
+        _with_cohort(_section_stratified(f, r, figures), cohort_note),
+        _with_cohort(_section_detection(f, r), cohort_note),
+        _with_cohort(_section_calibration(f, r, figures), cohort_note),
+        _with_cohort(_section_abstention(f, r), cohort_note),
         _section_subgroups(f, r),
         "## 8. Not computable on this data\n\n"
         + ("\n".join(f"- {n}" for n in r.not_computable) or "Nothing."),
