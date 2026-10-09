@@ -183,7 +183,21 @@ def test_dentex_shaped_run_reports_what_it_cannot_compute(tmp_path: Path) -> Non
     assert r.external is None and r.agreement.krippendorff is None
     assert any("no external dataset" in n for n in r.not_computable)
     assert any("no human tooth inventory" in n for n in r.not_computable)
-    assert any("one reader only" in n for n in r.not_computable)
+    assert any("rule 3 has no data on this cohort" in n for n in r.not_computable)
     assert [h.reason for h in r.headline][1:] == ["no external dataset"] * 2
     md = render_markdown(r, synthetic=True, figures=write_figures(r, tmp_path))
     assert "sensitivity (external)" not in md and "one reader only" in md
+
+
+def test_boxes_can_be_scored_at_the_operating_threshold(tmp_path: Path) -> None:
+    raw = CONFIG.read_text().replace("score_threshold: 0.3", "score_threshold: operating_point")
+    path = tmp_path / "c.yaml"
+    path.write_text(raw)
+    cfg = dataclasses.replace(
+        StudyConfig.from_yaml(path), n_boot=40,
+        synthetic=SyntheticConfig(internal_patients=120, external_patients=50,
+                                  external_demographics=False))
+    assert cfg.box_score_threshold is None
+    r = evaluate(*synthetic_inputs(cfg), cfg)
+    assert r.internal.detection[0].report.threshold == r.operating_point.threshold
+    assert "(the operating threshold)" in render_markdown(r, synthetic=True)

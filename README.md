@@ -101,7 +101,25 @@ two independent reasons, both reproduced by `scripts/audit_dentex.py`:
 It is kept as evidence in the audit only.
 
 **Evaluation set:** the 755 depth-labelled images (diagnosis train 705 +
-validation 50), split by *recovered* patient. Every metric is reported both with
+validation 50), split by *recovered* patient.
+
+**Tooth-level results carry a selection effect.** Tooth-level metrics need a
+human tooth inventory, which exists only where an evaluation image has a copy in
+the enumeration subset: 253 of the 755 images. That subset is not random. It
+differs in image dimensions, sits mostly in one recovered acquisition cluster,
+and has fewer images with deep caries, periapical lesions and impacted teeth
+than the other 502. So every tooth-level number describes the enumeration-copy
+subset, not DENTEX as a whole. `scripts/run_dentex.py` recomputes this check on
+every run and prints it at the top of the report. Stage 1 (a tooth enumerator)
+exists to remove the restriction, at the price of putting its own error into
+every denominator.
+
+**Patient recovery found nothing, and that is a weak null.** On the 755
+evaluation images, the torch-free thumbnail embedding finds no separated
+high-similarity mode and declares no probable same-patient pairs. There are no
+exact or pixel-level duplicates inside the set either. That says this
+representation sees no repeat visits, not that none exist. Until a stronger
+embedding agrees, the "patient-level" split is, in effect, image-level. Every metric is reported both with
 and without the images that have a copy anywhere in a training subset, and the
 gap between the two is a headline result.
 

@@ -244,7 +244,10 @@ def _section_detection(f: _Formatter, r: EvaluationResult) -> str:
     parts = [
         "## 4. Lesion-level detection, per reader",
         (f"Boxes matched to each reader's own lesions (IoU ≥ {r.config.iou_threshold}); "
-        f"sensitivity and FP/image at box score ≥ {r.config.box_score_threshold}. AP per "
+        "sensitivity and FP/image at box score ≥ "
+        + (f"{r.operating_point.threshold:.3f} (the operating threshold)"
+           if r.config.box_score_threshold is None else f"{r.config.box_score_threshold}")
+        + ". AP per "
         "depth ignores lesions of the other depth, and background false positives count "
         "against every depth."),
     ]

@@ -43,6 +43,8 @@ detection:
   # subset and reference boxes from the diagnosis subset: two annotation layers
   # drawing the same tooth, so IoU 0.5 is a fair match criterion.
   iou_threshold: 0.5
-  score_threshold: 0.3
+  # A box's score is its tooth's P(lesion), so boxes are scored at the frozen
+  # operating threshold, not at an unrelated constant.
+  score_threshold: operating_point
 
 headline_alpha: 0.05

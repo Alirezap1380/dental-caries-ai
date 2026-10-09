@@ -33,7 +33,7 @@ class FittedHead:
 
     def predict_proba(self, x: np.ndarray) -> np.ndarray:
         """Probabilities over all `n_classes`, even ones absent from training."""
-        p = self.pipeline.predict_proba(x)
+        p = self.pipeline.predict_proba(np.asarray(x, dtype=np.float64))
         out = np.zeros((x.shape[0], self.n_classes))
         out[:, self.pipeline.classes_] = p
         return out
@@ -53,7 +53,12 @@ def fit_head(
     cs: Sequence[float] = (1e-4, 3e-4, 1e-3, 3e-3, 1e-2),
     n_splits: int = 5,
 ) -> FittedHead:
-    """Choose C by patient-grouped CV log-loss, then refit on all training teeth."""
+    """Choose C by patient-grouped CV log-loss, then refit on all training teeth.
+
+    Features are promoted to float64: encoder features arrive as float32, and
+    float32 probabilities miss sum-to-one by ~1e-7, which log-loss rightly rejects.
+    """
+    x = np.asarray(x, dtype=np.float64)
     if len(set(groups)) < n_splits:
         raise ValueError(f"need at least {n_splits} patients for {n_splits}-fold CV")
     labels = list(range(n_classes))
@@ -66,7 +71,8 @@ def fit_head(
             m = _model(c).fit(x[tr], y[tr])
             p = np.zeros((len(te), n_classes))
             p[:, m.classes_] = m.predict_proba(x[te])
-            losses.append(log_loss(y[te], np.clip(p, 1e-12, 1.0), labels=labels))
+            p = np.clip(p, 1e-12, 1.0)
+            losses.append(log_loss(y[te], p / p.sum(axis=1, keepdims=True), labels=labels))
         scores[float(c)] = float(np.mean(losses))
     best = min(scores, key=scores.get)
     return FittedHead(_model(best).fit(x, y), n_classes, best, scores)

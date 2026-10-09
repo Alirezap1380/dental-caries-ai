@@ -105,7 +105,9 @@ class StudyConfig:
     splits: Mapping[str, float]
     operating_point: OperatingPointConfig
     iou_threshold: float
-    box_score_threshold: float
+    # None = "operating_point": score boxes at the frozen operating threshold. Right
+    # whenever a box's score *is* the tooth's P(lesion), as in the two-stage model.
+    box_score_threshold: float | None
     headline_alpha: float
     age_edges: tuple[int, ...] = DEFAULT_AGE_EDGES
     synthetic: SyntheticConfig | None = None
@@ -127,7 +129,9 @@ class StudyConfig:
             splits={k: float(v) for k, v in raw["splits"].items()},
             operating_point=OperatingPointConfig(**raw["operating_point"]),
             iou_threshold=float(raw["detection"]["iou_threshold"]),
-            box_score_threshold=float(raw["detection"]["score_threshold"]),
+            box_score_threshold=(
+                None if raw["detection"]["score_threshold"] == "operating_point"
+                else float(raw["detection"]["score_threshold"])),
             headline_alpha=float(raw["headline_alpha"]),
             age_edges=tuple(raw.get("age_edges", DEFAULT_AGE_EDGES)),
             synthetic=None if syn is None else SyntheticConfig(**{
@@ -283,7 +287,8 @@ def _evaluate_set(
                           reader=reader, scale=cfg.scale, iou_threshold=cfg.iou_threshold)
         detection.append(ReaderDetection(
             reader, len(read),
-            detection_report(m, threshold=cfg.box_score_threshold, **boot),
+            detection_report(m, threshold=(op.threshold if cfg.box_score_threshold is None
+                                           else cfg.box_score_threshold), **boot),
             stratified_average_precision(m, **boot),
         ))
 
@@ -312,8 +317,9 @@ def _agreement(
     boot = {"seed": cfg.seed, "n_boot": cfg.n_boot}
     weights = "linear"
     if len(humans.raters) < 2:
-        reason = (f"one reader only ({', '.join(humans.raters)}): inter-observer agreement and "
-                  "the human ceiling are not computable on this data")
+        reason = (f"rule 3 has no data on this cohort: one reader only "
+                  f"({', '.join(humans.raters)}), so inter-observer agreement and the human "
+                  "ceiling are not computable")
         notes.append(f"{inputs.name}: {reason}")
         return AgreementResult(
             n_teeth=len(humans.item_ids), n_images=len(inputs.records), readers=humans.raters,

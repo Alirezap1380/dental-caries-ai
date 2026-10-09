@@ -53,6 +53,14 @@ def test_head_picks_c_by_grouped_cv_and_returns_full_probabilities() -> None:
     assert p.shape == (5, 3) and np.allclose(p.sum(axis=1), 1.0)
 
 
+def test_head_on_float32_features_raises_no_probability_warning() -> None:
+    # Regression: float32 encoder features gave float32 probabilities that missed
+    # sum-to-one by ~1e-7 and made log-loss warn (an error under this suite).
+    x, y, groups = separable()
+    head = fit_head(x.astype(np.float32), y, groups, n_classes=3, seed=0)
+    assert np.allclose(head.predict_proba(x[:5].astype(np.float32)).sum(axis=1), 1.0, atol=1e-12)
+
+
 def test_head_handles_a_class_missing_from_training() -> None:
     x, y, groups = separable()
     keep = y != 2
