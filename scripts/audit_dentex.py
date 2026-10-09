@@ -129,8 +129,8 @@ def main(argv: list[str] | None = None) -> int:
               [[NAMES[r], *(f"({within[r]})" if r == c else len(members[r] & members[c])
                             for c in subs)] for r in subs]),
         f"- **{len(exact_elsewhere('test'))} of {counts['test']} test images** have an exact "
-        f"copy elsewhere in the release; **{len(shared_c_test)}** are in the diagnosis "
-        "training set itself"
+        f"copy elsewhere in the release; **{len(shared_c_test)}** "
+        f"{'is' if len(shared_c_test) == 1 else 'are'} in the diagnosis training set itself"
         + (": " + ", ".join(f"`{name_of[('diagnosis', h)]}` = `{name_of[('test', h)]}`"
                             for h in shared_c_test) if shared_c_test else "") + ".",
         (f"- **{len(exact_elsewhere('validation'))} of {counts['validation']} validation "
@@ -162,7 +162,8 @@ def main(argv: list[str] | None = None) -> int:
         "## Re-encoded copies: pixel evidence",
         ("Pairs of *different* files (distinct SHA-256) declared the same image when the "
         "perceptual-hash Hamming distance is ≤ 6 **and** the standardised-thumbnail "
-        f"correlation is ≥ 0.95: **{len(pairs)} pairs**. Images in the row subset with such "
+        f"correlation is ≥ 0.95: **{len(pairs)} pair{'' if len(pairs) == 1 else 's'}**. "
+        "Images in the row subset with such "
         "a copy in the column subset (the diagonal: within the subset):"),
         table(["", *(NAMES[s] for s in subs)],
               [[NAMES[r], *(len(reenc[(r, c)]) for c in subs)] for r in subs]),
