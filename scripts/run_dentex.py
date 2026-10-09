@@ -148,6 +148,36 @@ def deep_caries_diagnostics(y: np.ndarray, proba: np.ndarray, x: np.ndarray, gro
     ])
 
 
+def accuracy_vs_doing_nothing(y: np.ndarray, proba: np.ndarray, groups: np.ndarray,
+                              test: np.ndarray, threshold: float, cfg: StudyConfig) -> str:
+    """Tooth-level accuracy of the model against a baseline that calls every tooth sound.
+
+    On a mostly sound dentition, accuracy rewards doing nothing. Shown so a headline
+    accuracy can be read against what it would take to beat it.
+    """
+    boot = {"seed": cfg.seed, "n_boot": cfg.n_boot}
+    g = groups[test]
+    lesion = y[test] > 0
+    flagged = (1 - proba[test, 0]) >= threshold
+    model_ok, sound_ok = flagged == lesion, ~lesion
+    acc_model = grouped_bootstrap(lambda i: float(model_ok[i].mean()), g, **boot)
+    acc_sound = grouped_bootstrap(lambda i: float(sound_ok[i].mean()), g, **boot)
+    gap = difference(acc_sound, acc_model, paired=True)
+    n, n_les = int(lesion.size), int(lesion.sum())
+    return "\n\n".join([
+        "## Accuracy against doing nothing",
+        (f"Tooth-level accuracy (lesion vs sound) on the {n} test teeth, of which {n_les} carry "
+         "a lesion. Patient-grouped 95% CIs; the difference is paired over the same teeth."),
+        ("| | accuracy | lesions caught |\n|---|---|---|\n"
+        f"| model at the operating point | {acc_model} ({int(model_ok.sum())}/{n}) | "
+        f"{int((flagged & lesion).sum())} of {n_les} |\n"
+        f"| always predict sound | {acc_sound} ({int(sound_ok.sum())}/{n}) | 0 of {n_les} |"),
+        (f"Always-sound minus model: **{gap}**. A model that does nothing beats this one on "
+         "accuracy while catching no lesions at all, which is why accuracy is never the "
+         "headline here."),
+    ])
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", type=Path, required=True)
@@ -192,6 +222,9 @@ def main(argv: list[str] | None = None) -> int:
         np.array([k.image_id in val_ids for k in keys]),
         np.array([k.image_id in test_ids for k in keys]),
         result.operating_point.threshold, cfg)
+    accuracy = accuracy_vs_doing_nothing(
+        y, proba, np.array([group_of[k.image_id] for k in keys]),
+        np.array([k.image_id in test_ids for k in keys]), result.operating_point.threshold, cfg)
     test_set = result.internal
     det = test_set.detection[0].report
     spec = test_set.stratified.specificity
@@ -248,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
          "No difference detected on these checks. That does not prove randomness, but no "
          "selection effect is visible."),
     ])
-    (args.out / "report.md").write_text(f"{title}\n\n{header}\n\n{rest}\n{diagnostics}\n")
+    (args.out / "report.md").write_text(f"{title}\n\n{header}\n\n{rest}\n{accuracy}\n\n{diagnostics}\n")
     print(f"wrote {args.out / 'report.md'} in {time.time() - t0:.0f}s")
     for f in tripwire(result):
         print(f"TRIPWIRE  {f}")

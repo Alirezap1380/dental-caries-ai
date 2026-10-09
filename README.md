@@ -77,8 +77,10 @@ The >0.95 tripwire fires on all four size-matched and naive scores. Each is labe
 training sets. That is the leak this experiment measures, not a result. It does not fire on
 the honest model.
 
-This measures the enumerator only. Stage 2 is not yet chained to it, so the effect of the
-duplicates on diagnosis is not measured here.
+**Figure 1 measures enumeration, not diagnosis. The end-to-end effect of the duplicates on
+caries detection is not measured.** This is deliberate. Stage 2's head never saw a duplicate,
+so a chained measurement would only carry figure 1's enumerator effect through stage 2's extra
+noise: a worse measurement of the same thing.
 
 Full report: [`results/dentex_stage1/report.md`](results/dentex_stage1/report.md).
 
@@ -115,7 +117,40 @@ At the validation-fitted operating point (threshold 0.122, sensitivity target 0.
 | Recalibration slope | 0.93 [0.79, 1.10] |
 | Lesions cleared without referral, at 85% coverage | 0.12 [0.07, 0.17] |
 
-Three things in that table are worth reading carefully.
+Against a model that does nothing (tooth-level, lesion vs sound, 1,459 test teeth):
+
+| | accuracy | lesions caught |
+| --- | --- | --- |
+| model at the operating point | 0.718 [0.691, 0.743] | 171 of 225 |
+| always predict sound | 0.846 [0.817, 0.874] | 0 of 225 |
+
+Calling every tooth sound beats the model on accuracy by **0.127 [0.086, 0.169]** while
+catching no lesions at all. On a mostly sound dentition, headline accuracy rewards doing
+nothing, which is why it is never the headline here.
+
+### Why this operating point
+
+The false-positive figure only means something next to the role the model is meant to play.
+
+1. **Deployment role: second reader.** A dentist adjudicates every flag before anything is
+   done to the tooth.
+2. **The asymmetry that follows.** Caries inverts the usual screening logic. A missed early
+   lesion is caught later and restored instead of arrested: a bounded, partly recoverable
+   harm. A false positive that is acted on drills a sound tooth: permanent loss of structure,
+   and the start of the restorative cycle, each replacement larger than the last, ending in a
+   crown or extraction. As a second reader, a false positive costs review time rather than
+   tooth structure (with a residual risk that a flag anchors the reviewer towards treatment),
+   so sensitivity can be the binding constraint.
+3. **Chosen target: sensitivity ≥ 0.80** against the consensus reference, fitted on
+   validation. This is provisional; it should be re-anchored to readers' own sensitivity once
+   multi-reader data exists, because a second reader far more sensitive than the readers
+   mostly adds flags they will overrule.
+4. **If the role changes** to autonomous triage, where a flag drives treatment without review,
+   specificity becomes the binding constraint and is set first, and sensitivity becomes the
+   reported cost. The code enforces this: an `OperatingPoint` for autonomous triage is
+   rejected unless specificity binds, and none can be built without a written rationale.
+
+Three things in the tables above are worth reading carefully.
 
 **The model never calls a lesion "deep".** Not once in 35 deep teeth. With 82 deep teeth
 among 4,372 in training, L2 regularisation shrinks the class until it can never win the
@@ -155,6 +190,10 @@ These are assertions that fail loudly, not conventions.
    images. When patients contribute several images (bitewings come in fours), image-level
    resampling produces intervals about half as wide, and wrong. On DENTEX, with one image
    per patient, the two coincide.
+6. **Tooth inventories come from human enumeration.** Tooth-level metrics refuse to run
+   unless the inventory came from human enumeration labels. An inventory rebuilt from
+   diagnosis boxes contains only diseased teeth, so sound teeth vanish and every denominator
+   becomes meaningless.
 
 Plus a **>0.95 tripwire**: any performance figure above 0.95 is flagged at the top of the
 report. Flags resting on fewer than 20 units are listed separately as likely noise.
@@ -189,6 +228,14 @@ duplicates instead.
 
 **Subgroup analysis by age and sex** is not computable, because the release carries no
 demographics.
+
+---
+
+## Future work
+
+- Chain stage 2 to the enumerator, so tooth-level metrics cover all 755 images rather than
+  the 253 with a human inventory, with the enumerator's own errors carried into the
+  denominators.
 
 ---
 

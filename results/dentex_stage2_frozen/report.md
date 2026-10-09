@@ -159,6 +159,17 @@ Depth-stratified within every subgroup: age is confounded with lesion depth, so 
 - no external dataset: rule 4 (external validation is the real number) has nothing behind it yet, so every number here is internal
 - internal test: rule 3 has no data on this cohort: one reader only (consensus), so inter-observer agreement and the human ceiling are not computable
 
+## Accuracy against doing nothing
+
+Tooth-level accuracy (lesion vs sound) on the 1459 test teeth, of which 225 carry a lesion. Patient-grouped 95% CIs; the difference is paired over the same teeth.
+
+| | accuracy | lesions caught |
+|---|---|---|
+| model at the operating point | 0.718 [0.691, 0.743] (1048/1459) | 171 of 225 |
+| always predict sound | 0.846 [0.817, 0.874] (1234/1459) | 0 of 225 |
+
+Always-sound minus model: **0.127 [0.086, 0.169]**. A model that does nothing beats this one on accuracy while catching no lesions at all, which is why accuracy is never the headline here.
+
 ## Deep caries: detection difficulty or class imbalance?
 
 Section 3's sensitivity is **detection-only**: a tooth counts as detected when P(lesion) = 1 − P(sound) clears the threshold, whatever depth the model calls. The second column below adds whether the depth was also called correctly.
