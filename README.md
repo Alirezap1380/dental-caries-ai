@@ -39,7 +39,7 @@ release, after verifying each archive against its published checksum. Full repor
 > **Scope of this claim.** These findings describe the HuggingFace release named above,
 > which is the distribution this project used. Whether the original challenge
 > distribution shares them has not been checked, so the duplication may be an artefact
-> of how that mirror was assembled rather than a property of the benchmark as run.
+> of how that release was assembled rather than a property of the benchmark as run.
 > Everything stated here is reproducible from the release by `scripts/audit_dentex.py`.
 
 ---
