@@ -13,6 +13,8 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+# Deterministic SVG element ids, so regenerating a report does not churn git.
+matplotlib.rcParams["svg.hashsalt"] = "dcai"
 import matplotlib.pyplot as plt
 import numpy as np
 

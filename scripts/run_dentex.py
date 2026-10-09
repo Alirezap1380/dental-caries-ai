@@ -17,16 +17,12 @@ from __future__ import annotations
 
 import argparse
 import time
-from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
-from scipy.stats import chi2_contingency, mannwhitneyu
 
-from dcai.data.dentex import extract_images, load_dentex
-from dcai.data.near_duplicates import Signature, near_duplicates, signatures_for
-from dcai.data.schema import CONSENSUS, Finding, RadiographRecord
-from dcai.eval.bootstrap import difference, grouped_bootstrap
+from dcai.data.schema import CONSENSUS, Finding
+from dcai.dentex_setup import prepare
 from dcai.eval.detection import Detection
 from dcai.eval.ratings import tooth_grades
 from dcai.eval.units import ToothPrediction
@@ -34,81 +30,8 @@ from dcai.figures import write_figures
 from dcai.models.encoders import FrozenResNet50, tooth_features
 from dcai.models.tooth_head import fit_head
 from dcai.pipeline import DatasetInputs, StudyConfig, evaluate, make_split
-from dcai.probes.recover_groups import (
-    PatientRecovery,
-    cluster_sites,
-    fingerprint,
-    fingerprint_features,
-    load_gray,
-    recover_patients,
-    with_recovered_patients,
-)
+from dcai.probes.recover_groups import load_gray
 from dcai.report import render_markdown, small_cell_flags, tripwire
-
-DENTEX_FINDINGS = (Finding.CARIES, Finding.DEEP_CARIES, Finding.PERIAPICAL_LESION,
-                   Finding.IMPACTED_TOOTH)
-
-
-def duplicate_check(records: Sequence[RadiographRecord], sigs: dict[str, Signature],
-                    recovery: PatientRecovery) -> list[str]:
-    """Every near-duplicate pair inside the evaluation set must share a recovered group.
-
-    A pair split across groups could land on both sides of our own patient split
-    and leak straight into stage 2, so it stops the run.
-    """
-    image_of = {r.meta["sha256"]: r.image_id for r in records}
-    pairs = near_duplicates([sigs[h] for h in image_of])
-    crossing = [p for p in pairs
-                if recovery.group_of[image_of[p.a]] != recovery.group_of[image_of[p.b]]]
-    if crossing:
-        raise SystemExit(
-            f"patient recovery missed {len(crossing)} near-duplicate pair(s) inside the "
-            "evaluation set: " + "; ".join(
-                f"{image_of[p.a]} ~ {image_of[p.b]} (Hamming {p.hamming}, r = {p.corr:.3f})"
-                for p in crossing[:5]))
-    return [f"{image_of[p.a]} ~ {image_of[p.b]} (Hamming {p.hamming}, r = {p.corr:.3f})"
-            for p in pairs]
-
-
-def selection_check(records: Sequence[RadiographRecord], inventoried: set[str], *,
-                    seed: int, n_boot: int) -> tuple[str, bool]:
-    """Are the inventoried images a random subset of the evaluation set?"""
-    inv = [r for r in records if r.image_id in inventoried]
-    rest = [r for r in records if r.image_id not in inventoried]
-    rows, differs = [], False
-
-    for name in ("width", "height"):
-        a, b = [getattr(r, name) for r in inv], [getattr(r, name) for r in rest]
-        p = float(mannwhitneyu(a, b).pvalue)
-        differs |= p < 0.05
-        rows.append(f"| image {name}, median px | {np.median(a):.0f} | {np.median(b):.0f} | "
-                    f"Mann-Whitney p = {p:.3g} |")
-
-    clusters = cluster_sites(
-        fingerprint_features([fingerprint(r.image_id, Path(r.path)) for r in records]), seed=seed)
-    in_inv = np.array([r.image_id in inventoried for r in records])
-    tab = np.array([[np.sum((clusters.labels == k) & in_inv), np.sum((clusters.labels == k) & ~in_inv)]
-                    for k in range(clusters.best_k)])
-    p = float(chi2_contingency(tab)[1])
-    differs |= p < 0.05
-    rows.append(f"| recovered site cluster (k = {clusters.best_k}, silhouette "
-                f"{clusters.silhouette[clusters.best_k]:.2f}), images per cluster | "
-                f"{tab[:, 0].tolist()} | {tab[:, 1].tolist()} | χ² p = {p:.3g} |")
-
-    for k, finding in enumerate(DENTEX_FINDINGS):
-        ests = []
-        for j, group in enumerate((inv, rest)):
-            y = np.array([any(a.finding is finding for a in r.annotations) for r in group], float)
-            ests.append(grouped_bootstrap(lambda i, y=y: float(y[i].mean()),
-                                          [r.group_key for r in group],
-                                          seed=seed + 2 * k + j, n_boot=n_boot))
-        d = difference(ests[0], ests[1], paired=False)
-        differs |= d.lo > 0 or d.hi < 0
-        rows.append(f"| share of images with {finding.value} | {ests[0]} | {ests[1]} | "
-                    f"difference {d} |")
-    header = (f"| | inventoried ({len(inv)}) | not inventoried ({len(rest)}) | test |\n"
-              "|---|---|---|---|")
-    return header + "\n" + "\n".join(rows), differs
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -119,26 +42,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--work", type=Path, default=Path("data/dentex"))
     args = ap.parse_args(argv)
     cfg = StudyConfig.from_yaml(args.config)
-    cache, store = args.work / "cache", args.work / "images"
     t0 = time.time()
-
-    rel = load_dentex(args.data, store=store, index_cache=cache / "sha256_index.json")
-    extract_images(rel, args.data, store, subsets=("diagnosis", "validation"))
-
-    # Patient groups from the same pixel signatures the audit uses (cached).
-    evals = {r.meta["sha256"] for r in rel.records}
-    sigs = signatures_for([(str(args.data / e.zip_name), e.member, e.sha256)
-                           for e in rel.index if e.sha256 in evals],
-                          cache=cache / "pixel_signatures.json")
-    shas = [r.meta["sha256"] for r in rel.records]
-    recovery = recover_patients([r.image_id for r in rel.records],
-                                np.array([sigs[h].phash for h in shas]),
-                                np.array([sigs[h].thumb for h in shas]), seed=cfg.seed)
-    records = with_recovered_patients(list(rel.records), recovery)
-    near_pairs = duplicate_check(records, sigs, recovery)
+    prep = prepare(args.data, args.work, seed=cfg.seed, n_boot=cfg.n_boot)
+    rel, records, recovery = prep.release, prep.records, prep.recovery
+    near_pairs, selection, selected = prep.near_pairs, prep.selection_table, prep.selection_effect
     inventoried = [r for r in records if r.teeth_present is not None]
-    selection, selected = selection_check(records, {r.image_id for r in inventoried},
-                                          seed=cfg.seed, n_boot=cfg.n_boot)
     print(f"integrity checks passed ({time.time() - t0:.0f}s); selection effect: {selected}")
 
     split = make_split(inventoried, cfg)

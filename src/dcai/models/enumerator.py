@@ -120,8 +120,9 @@ def train_enumerator(
                     img, teeth = img[:, ::-1].copy(), mirror_teeth(teeth, img.shape[1])
                 images.append(_to_tensor(img).to(device))
                 targets.append({
-                    "boxes": torch.tensor([b.as_array() for _, b in teeth],
-                                          dtype=torch.float32, device=device),
+                    "boxes": torch.from_numpy(
+                        np.array([b.as_array() for _, b in teeth], dtype=np.float32).reshape(-1, 4)
+                    ).to(device),
                     "labels": torch.tensor([fdi_to_label(f) for f, _ in teeth],
                                            dtype=torch.int64, device=device),
                 })
@@ -130,7 +131,7 @@ def train_enumerator(
             loss.backward()
             opt.step()
             sched.step()
-            losses.append(float(loss))
+            losses.append(loss.item())
         log(f"epoch {epoch + 1}/{config.epochs}: mean loss {np.mean(losses):.3f}")
     return model.eval()
 
